@@ -254,8 +254,10 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool) error {
 }
 
 // bringUp creates a fresh box, starts it, and runs the manifest's setup. The
-// returned teardown must be deferred by the caller.
-func bringUp(m *manifest.Manifest) (box.Box, func(), error) {
+// returned teardown must be deferred by the caller. extraPorts are published in
+// addition to those declared by loopback oauth credentials — explore uses this
+// to reserve a callback port for an oauth login it may only discover mid-run.
+func bringUp(m *manifest.Manifest, extraPorts ...int) (box.Box, func(), error) {
 	// Publish callback ports declared by loopback oauth credentials so the
 	// browser redirect on the host reaches the login server inside the box.
 	var ports []int
@@ -264,6 +266,7 @@ func bringUp(m *manifest.Manifest) (box.Box, func(), error) {
 			ports = append(ports, c.CallbackPort)
 		}
 	}
+	ports = append(ports, extraPorts...)
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
 	fmt.Printf("▸ box up:   %s\n", m.Box.Image)
 	if err := b.Up(); err != nil {
@@ -325,7 +328,9 @@ func exploreCmd(intent, model, name string) error {
 	fmt.Printf("▸ explore:  %s\n", name)
 	fmt.Printf("▸ intent:   %s\n", intent)
 
-	b, teardown, err := bringUp(m)
+	// Reserve the oauth callback port up front: explore may discover a loopback
+	// login mid-run, and the port must already be published to forward the redirect.
+	b, teardown, err := bringUp(m, explore.DefaultOAuthPort)
 	if err != nil {
 		return err
 	}
