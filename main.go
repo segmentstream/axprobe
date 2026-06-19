@@ -34,6 +34,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      with no argument, runs every .axprobe/*.yaml in the current directory")
 	fmt.Fprintln(os.Stderr, "  axprobe explore --model <id> [--name <name>] \"<intent>\"")
 	fmt.Fprintln(os.Stderr, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
+	fmt.Fprintln(os.Stderr, "  axprobe probe [--image <img>] <command> [<command>...]")
+	fmt.Fprintln(os.Stderr, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
 	os.Exit(2)
 }
 
@@ -50,9 +52,59 @@ func main() {
 		runMain()
 	case "explore":
 		exploreMain()
+	case "probe":
+		probeMain()
 	default:
 		usage()
 	}
+}
+
+// probeMain runs one or more commands in a clean box — no LLM, no scenario, no
+// report. The cheap "I know the command, just run it in the sandbox" mode.
+func probeMain() {
+	fs := flag.NewFlagSet("probe", flag.ExitOnError)
+	image := fs.String("image", "", "Box image to use when there is no .axprobe/config.yaml (runs with no setup).")
+	pos := parsePositionals(fs, os.Args[2:])
+	if len(pos) < 1 {
+		usage()
+	}
+	if err := probeCmd(pos, *image); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func probeCmd(commands []string, image string) error {
+	var m *manifest.Manifest
+	if image != "" {
+		// Bare box, no setup.
+		m = &manifest.Manifest{SchemaVersion: manifest.SupportedSchemaVersion, Name: "probe", Box: manifest.BoxSpec{Image: image}}
+	} else {
+		cfg, err := manifest.LoadConfig(filepath.Join(".axprobe", manifest.ConfigFile))
+		if err != nil {
+			return err
+		}
+		if cfg == nil {
+			return fmt.Errorf("no .axprobe/%s and no --image — nothing to base the box on", manifest.ConfigFile)
+		}
+		m = &manifest.Manifest{SchemaVersion: manifest.SupportedSchemaVersion, Name: "probe", Box: cfg.Box}
+	}
+
+	b, teardown, err := bringUp(m)
+	if err != nil {
+		return err
+	}
+	defer teardown()
+
+	for _, cmd := range commands {
+		fmt.Printf("▸ probe:    %s\n", cmd)
+		res, err := b.Exec(cmd)
+		if err != nil {
+			return err
+		}
+		printResult(res)
+	}
+	return nil
 }
 
 func runMain() {
