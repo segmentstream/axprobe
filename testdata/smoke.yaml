@@ -1,0 +1,15 @@
+# Smallest possible manifest: no tool to install, just proves the box plumbing
+# works end to end. Run this first to confirm axprobe + Docker are wired up:
+#   axprobe run testdata/smoke.yaml
+schema_version: "1"
+name: smoke
+goal: Prove the box plumbing works end to end
+
+box:
+  image: ubuntu:24.04
+  setup:
+    - echo "setup ok"
+
+probes:
+  - uname -a
+  - echo "hello from inside the box"

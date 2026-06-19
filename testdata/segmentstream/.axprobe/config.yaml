@@ -1,0 +1,11 @@
+# Workspace config — how to install/run the product under test (segmentstream).
+# Shared by every scenario in this .axprobe/ directory; authored once.
+schema_version: "1"
+box:
+  image: ubuntu:24.04
+  setup:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates jq
+    - curl -fsSL https://raw.githubusercontent.com/segmentstream/segmentstream-cli/main/install.sh | sh
+    # The installer puts the binary in $HOME/.segmentstream/bin (not on PATH in a
+    # fresh box). Make it available to every login shell the harness opens.
+    - echo 'export PATH="$HOME/.segmentstream/bin:$HOME/.local/bin:$PATH"' > /etc/profile.d/segmentstream.sh

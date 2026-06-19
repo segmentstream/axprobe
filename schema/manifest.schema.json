@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/segmentstream/axprobe/blob/main/schema/manifest.schema.json",
+  "title": "axprobe scenario",
+  "description": "A test scenario for axprobe, authored under .axprobe/<scenario>.yaml. Only the scenario (intent/goal, checks, scenario-specific credentials) lives here; the box/install is inherited from the sibling .axprobe/config.yaml unless the scenario defines its own box. Public, versioned interface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Manifest contract version. Currently \"1\". Bumped on breaking changes."
+    },
+    "name": {
+      "type": "string",
+      "description": "Scenario name. Used for reports and as the credential-store namespace."
+    },
+    "intent": {
+      "type": "string",
+      "description": "Plain-language description of the scenario. The human-authored source; `explore` derives goal/checks/credentials from it."
+    },
+    "goal": {
+      "type": "string",
+      "description": "What the LLM driver should pursue (Layer 1). Often derived from intent."
+    },
+    "stop_when": {
+      "type": "string",
+      "description": "Optional natural-language stop condition for the driver."
+    },
+    "success_check": {
+      "type": "string",
+      "description": "Command/assertion describing success. Informational for now."
+    },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "description": "Optional. The environment + install. Normally inherited from .axprobe/config.yaml; set here only for a self-contained scenario.",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image for the box, e.g. ubuntu:24.04."
+        },
+        "setup": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Commands to install the tool under test. A failing step aborts the run."
+        }
+      }
+    },
+    "probes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Layer 0 scripted commands, run when no --model is given (stand-in for the LLM driver)."
+    },
+    "expect": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The AX bar (PM-owned definition of done). When set, the run exits non-zero if the result misses it — the CI gate / TDD signal. Counts are upper bounds (<=).",
+      "properties": {
+        "goal_reached": { "type": "boolean", "description": "Required value of goal_reached." },
+        "outcome": { "type": "string", "enum": ["goal_reached", "stopped_at_gate", "stuck", "error"], "description": "Required exact outcome." },
+        "max_human_interventions": { "type": "integer", "minimum": 0, "description": "Upper bound on human_interventions (HIC)." },
+        "max_false_errors": { "type": "integer", "minimum": 0, "description": "Upper bound on false_errors." }
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "description": "Credentials the secret broker may collect, store and inject when the driver gates.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "kind"],
+        "description": "A human-gated requirement. `kind` selects which broker resolver runs when the driver gates. file/value are implemented; oauth is approved (resolver pending).",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Credential id, used for storage and gate matching."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["file", "value", "oauth"],
+            "description": "file: a file path the user provides (uses inject). value: a literal secret value (uses inject). oauth: a browser login the harness runs (uses login_command + callback_port)."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "file/value: shown to the user when collecting the credential."
+          },
+          "inject": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "file/value only: where the credential lands inside the box. Use exactly one field.",
+            "properties": {
+              "box_path": {
+                "type": "string",
+                "description": "kind:file → write the file here inside the box."
+              },
+              "env": {
+                "type": "string",
+                "description": "kind:value → export under this env var for login shells in the box."
+              }
+            }
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["device", "loopback"],
+            "description": "kind:oauth → device (default; no callback — the broker streams the login URL+code to the host and waits) or loopback (uses callback_port)."
+          },
+          "login_command": {
+            "type": "string",
+            "description": "kind:oauth → the command the broker runs in the box to start the browser login."
+          },
+          "callback_port": {
+            "type": "integer",
+            "description": "kind:oauth, mode:loopback only → the loopback port the callback uses; forwarded host↔box so the browser redirect reaches the CLI in the box."
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+# Workspace for the loopback oauth self-test. It installs a fake `demo-login`
+# CLI that stands in for a real loopback-login tool (like `gcloud auth login`):
+# it announces a URL, starts a ONE-SHOT HTTP server on the callback port, waits
+# for the redirect, writes a marker, and exits. The box publishes that port, so
+# a request from the host reaches it — verifying host<->box port forwarding.
+schema_version: "1"
+box:
+  image: ubuntu:24.04
+  setup:
+    - apt-get update -qq && apt-get install -y -qq python3
+    - |
+      cat > /usr/local/bin/demo-login <<'EOF'
+      #!/usr/bin/env python3
+      import http.server, socketserver
+      print("Open http://localhost:8085/ in your browser to finish the login", flush=True)
+      class H(http.server.BaseHTTPRequestHandler):
+          def do_GET(s):
+              s.send_response(200); s.end_headers(); s.wfile.write(b'ok')
+          def log_message(s, *a): pass
+      socketserver.TCPServer(('0.0.0.0', 8085), H).handle_request()
+      open('/root/.demo-logged-in', 'w').close()
+      print("Login complete.", flush=True)
+      EOF
+      chmod +x /usr/local/bin/demo-login

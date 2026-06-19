@@ -1,0 +1,26 @@
+# Scenario: authenticate the GitHub CLI via its browser device-code login.
+# This exercises the kind:oauth, mode:device resolver end to end against a real
+# tool. Run it in a real terminal (you enter the device code in your browser):
+#   cd testdata/gh-device && axprobe run --model <id> gh-auth
+schema_version: "1"
+name: gh-auth
+intent: Authenticate the GitHub CLI using its browser device-code login, then confirm the session is authenticated.
+goal: Reach an authenticated `gh` session — `gh auth status` reports logged in.
+success_check: gh auth status
+
+# The AX bar (CI gate): the agent must reach the goal, with at most one human
+# gate (the browser login) and zero false errors.
+expect:
+  goal_reached: true
+  max_human_interventions: 1
+  max_false_errors: 0
+
+credentials:
+  - name: github_login
+    kind: oauth
+    mode: device
+    login_command: gh auth login --hostname github.com --git-protocol https --web
+    # Where gh stores its credential after login — cached (Keychain) so the next
+    # run is authenticated with no browser.
+    token_paths:
+      - /root/.config/gh

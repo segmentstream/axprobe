@@ -1,0 +1,14 @@
+# Loopback oauth self-test. The agent is told to run `demo-login`; that command
+# is the declared login_command, so the harness intercepts it and runs it through
+# the loopback resolver. The box publishes callback_port, so a host request to
+# localhost:8085 reaches the login server and completes it — no real account.
+schema_version: "1"
+name: loopback-demo
+goal: Authenticate by running the `demo-login` command (it performs a browser login), then confirm success — the file /root/.demo-logged-in must exist.
+
+credentials:
+  - name: demo_login
+    kind: oauth
+    mode: loopback
+    callback_port: 8085
+    login_command: demo-login

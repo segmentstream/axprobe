@@ -1,0 +1,17 @@
+# Scenario — only the test intent. The box/install is inherited from config.yaml.
+schema_version: "1"
+name: bigquery-onboarding
+goal: Drive `segmentstream init` all the way to ready:true. Reaching a step that
+  requires a credential is NOT success — gate for the credential and continue.
+success_check: segmentstream init --json   # later: assert .ready == true
+
+probes:
+  - segmentstream version
+  - segmentstream init --json
+
+credentials:
+  - name: bigquery_sa_key
+    kind: file
+    prompt: "Path to your BigQuery service-account JSON key"
+    inject:
+      box_path: /root/sa-key.json

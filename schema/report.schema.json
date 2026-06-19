@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/segmentstream/axprobe/blob/main/schema/report.schema.json",
+  "title": "axprobe AX report",
+  "description": "Machine-readable Agentic Experience (AX) report emitted once per run. This is a stable public interface consumed by regression tooling; field names, types and semantics are a contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scenario",
+    "model",
+    "outcome",
+    "goal_reached",
+    "human_interventions",
+    "gate_details",
+    "steps",
+    "commands_run",
+    "duration_seconds",
+    "observations",
+    "false_errors",
+    "tokens",
+    "summary"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Version of this report contract; bumped on breaking changes so consumers can adapt.",
+      "examples": ["1"]
+    },
+    "scenario": {
+      "type": "string",
+      "description": "Manifest name (the test scenario that was run)."
+    },
+    "model": {
+      "type": "string",
+      "description": "OpenRouter model id that drove the run. Empty for Layer 0 scripted runs."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["goal_reached", "stopped_at_gate", "stuck", "error"],
+      "description": "Headline terminal state of the run."
+    },
+    "goal_reached": {
+      "type": "boolean",
+      "description": "Whether the manifest goal was actually accomplished — distinct from merely hitting the stop condition or a human gate."
+    },
+    "human_interventions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of gate() calls: how many times a human was required (HIC, the north-star metric)."
+    },
+    "gate_details": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "For each gate, the 'needs' description: what the human had to provide or decide, and why."
+    },
+    "steps": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of driver tool-call rounds taken to reach a terminal state."
+    },
+    "commands_run": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of bash() shell commands executed inside the box."
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock duration of the driver loop, in seconds."
+    },
+    "observations": {
+      "type": "array",
+      "description": "Qualitative AX findings recorded by the driver via observe().",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["note"],
+        "properties": {
+          "note": { "type": "string", "description": "Plain-language description of the finding." },
+          "suggestion": { "type": "string", "description": "Optional simplification advice." }
+        }
+      }
+    },
+    "false_errors": {
+      "type": "array",
+      "description": "Non-zero exits that did not look like real failures (heuristic-detected): the command reported normal state / a next action.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code", "reason"],
+        "properties": {
+          "command": { "type": "string", "description": "The command that exited non-zero." },
+          "exit_code": { "type": "integer", "description": "The non-zero exit code." },
+          "reason": { "type": "string", "description": "Why it was flagged as a false error." }
+        }
+      }
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prompt", "completion", "total", "cost_usd"],
+      "description": "Token usage and cost, summed across all model calls in the run.",
+      "properties": {
+        "prompt": { "type": "integer", "description": "Prompt tokens." },
+        "completion": { "type": "integer", "description": "Completion tokens." },
+        "total": { "type": "integer", "description": "Total tokens." },
+        "cost_usd": { "type": "number", "description": "Cost in USD as reported by OpenRouter (0 if not reported)." }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Free-text recap from finish(). May be empty when the run ended at a gate (gate() has no summary)."
+    }
+  }
+}

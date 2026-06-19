@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/segmentstream/axprobe/blob/main/schema/config.schema.json",
+  "title": "axprobe workspace config",
+  "description": "The workspace file .axprobe/config.yaml — how to install/run the product under test, shared by every scenario in the same .axprobe/ directory. Authored once per target. Public, versioned interface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "box"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1",
+      "description": "Contract version. Currently \"1\"."
+    },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image"],
+      "description": "The disposable environment and how to get the tool under test into it.",
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "Container image for the box, e.g. ubuntu:24.04."
+        },
+        "setup": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Commands to install the tool under test. A failing step aborts the run."
+        }
+      }
+    },
+    "credentials": {
+      "type": "array",
+      "description": "Credentials shared across scenarios. A scenario may add or override by name. See the scenario schema for the credential shape.",
+      "items": { "type": "object" }
+    }
+  }
+}
