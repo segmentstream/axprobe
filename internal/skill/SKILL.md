@@ -109,8 +109,32 @@ shared systems, (3) access or credentials only they hold, (4) a genuinely novel
 situation no principle covers. Mechanical AX judgments are yours to make — that is
 how the human gets asked fewer questions over time.
 
-File findings as **GitHub issues in the tool's repo, in English**, framed as
-*Agentic UX*: what the agent experienced, why it matters, and a concrete request.
+## Finding format
+
+A finding is a **GitHub issue in the tool's repo, in English**, framed as
+*Agentic UX*:
+
+- **Title** — `Agentic UX: <the defect in one line>`
+- **Summary** — one paragraph: what is wrong.
+- **Observed** — the ACTUAL transcript, verbatim from the run: commands and the
+  errors / next-actions they returned, through to where the agent got stuck. This
+  is auto-fillable from the run report.
+- **Why it matters (Agentic Experience)** — which principle(s) it breaks
+  (self-sufficiency, honest-state, discover-don't-ask, …) and the impact (HIC,
+  stuck, a misleading success signal).
+- **Proposed flow (ideal)** — the IDEAL transcript: what the interaction should
+  look like. (Judgment.)
+- **Request** — concrete, numbered changes.
+- **Context** — "Found via axprobe …".
+
+## Filing is human-gated
+
+Drafting a finding is automatic; **filing** it is an external, public action on a
+shared system, so it stays in the "ask" bucket (decide-vs-ask category 2). The
+operator drafts in the format above (Observed transcript auto-filled from the
+report) and the product owner approves / edits / skips with one word. The harness
+never files issues itself — it emits a paste-ready draft; a human publishes it.
+Relax to auto-filing only low-risk findings once findings prove high-signal.
 
 ## Never coach the agent
 
