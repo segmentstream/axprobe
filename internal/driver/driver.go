@@ -23,6 +23,15 @@ type Gatekeeper interface {
 	Resolve(needs string) (resume string, ok bool)
 }
 
+// bareLoginInterceptor is an optional Gatekeeper capability. When it returns
+// true, the driver routes an apparent browser-login command the agent runs
+// directly (not via gate) through the gatekeeper, instead of executing it and
+// blocking forever. The discovery broker (explore) opts in because, unlike run,
+// it has no credential declared in advance to match against.
+type bareLoginInterceptor interface {
+	InterceptsBareLogins() bool
+}
+
 const (
 	maxSteps         = 30
 	maxToolOutput    = 4000 // chars of stdout/stderr fed back to the model
@@ -182,6 +191,22 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 			return "stopping: the interactive login could not be completed", true
 		}
 
+		// Explore has no credential declared in advance, so a login the agent runs
+		// directly (e.g. `… auth login`) would block forever. If the gatekeeper
+		// opts into intercepting bare logins, route it through the oauth resolver.
+		if bi, ok := d.gate.(bareLoginInterceptor); ok && bi.InterceptsBareLogins() &&
+			!isHelpInvocation(cmd) && looksLikeBrowserLogin(cmd) {
+			fmt.Printf("▸ bash:    %s\n", cmd)
+			fmt.Println("   ↪ interactive login — handled by the harness")
+			res.Gates = append(res.Gates, "browser login (discovered)")
+			if msg, ok := d.gate.Resolve("The agent attempted a browser login by running: " + cmd); ok {
+				fmt.Printf("✓ resumed: %s\n", oneline(msg))
+				return msg, false
+			}
+			res.StoppedAtGate = true
+			return "stopping: the interactive login could not be completed", true
+		}
+
 		fmt.Printf("▸ bash:    %s\n", cmd)
 		r, err := d.box.Exec(cmd)
 		if err != nil {
@@ -252,6 +277,19 @@ func declaredLogin(m *manifest.Manifest, cmd string) (manifest.Credential, bool)
 		}
 	}
 	return manifest.Credential{}, false
+}
+
+// looksLikeBrowserLogin reports whether cmd appears to start an interactive
+// browser/oauth login — e.g. "gh auth login", "gcloud auth login", "segmentstream
+// warehouse auth login". Used only by the explore interception path, where no
+// credential is declared in advance to match against.
+func looksLikeBrowserLogin(cmd string) bool {
+	for _, f := range strings.Fields(cmd) {
+		if f == "login" {
+			return true
+		}
+	}
+	return false
 }
 
 // isHelpInvocation reports whether cmd is a help/version invocation, which must

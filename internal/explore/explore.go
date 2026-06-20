@@ -54,6 +54,11 @@ func NewDiscoveryBroker(b box.Box, store *secrets.Store, client *llm.Client, in 
 	return &DiscoveryBroker{box: b, store: store, llm: client, in: bufio.NewReader(in), out: out, oauthPort: DefaultOAuthPort}
 }
 
+// InterceptsBareLogins opts into the driver routing a login command the agent
+// runs directly (rather than via the gate tool) through Resolve. In explore no
+// credential is declared up front, so an un-intercepted login would block forever.
+func (d *DiscoveryBroker) InterceptsBareLogins() bool { return true }
+
 // credProposal is the model's read of a gate: what kind of credential is needed
 // and, for oauth, how to log in.
 type credProposal struct {
@@ -79,7 +84,8 @@ Rules:
     mode = "loopback" for a localhost-redirect flow (the tool opens a URL and waits for a 127.0.0.1 callback), or "device" for a device-code flow.
     login_command = the exact shell command that starts the login (e.g. "segmentstream warehouse auth login").
   For a loopback flow the sandbox has reserved callback port %d — if the tool accepts a port flag, include it set to %d (e.g. append " --port %d").
-- name: a short snake_case identifier for the credential.`, d.oauthPort, d.oauthPort, d.oauthPort)
+- If the gate text quotes the exact command the agent ran, base login_command on THAT command, but for a loopback flow ensure the callback port flag is --port %d (add or replace it) and drop automation flags like --json.
+- name: a short snake_case identifier for the credential.`, d.oauthPort, d.oauthPort, d.oauthPort, d.oauthPort)
 
 	msg, _, err := d.llm.Chat(context.Background(),
 		[]llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: needs}}, nil)
@@ -242,49 +248,36 @@ func (d *DiscoveryBroker) fileSnapshot() map[string]bool {
 	return set
 }
 
-// discoverTokenPaths returns the credential-bearing directories that appeared
-// between two home snapshots, reduced to a small set of cacheable paths.
+// discoverTokenPaths returns the exact credential files that appeared between two
+// home snapshots. Caching the precise new files (not a parent directory) is what
+// keeps a multi-megabyte installed binary out of the cache: the binary was
+// written during setup, so it is not "new" and never selected.
 func discoverTokenPaths(before, after map[string]bool) []string {
-	dirs := map[string]bool{}
+	var files []string
 	for f := range after {
-		if before[f] {
+		if before[f] || !isCacheableNewFile(f) {
 			continue
 		}
-		if dir := tokenDir(f); dir != "" {
-			dirs[dir] = true
-		}
+		files = append(files, f)
 	}
-	out := make([]string, 0, len(dirs))
-	for dir := range dirs {
-		out = append(out, dir)
-	}
-	sort.Strings(out)
-	return out
+	sort.Strings(files)
+	return files
 }
 
-// tokenDir maps a new file to the stable directory worth caching, or "" if it
-// looks like shell/cache noise. e.g. /root/.segmentstream/creds/x.json →
-// /root/.segmentstream; /root/.config/gcloud/adc.json → /root/.config/gcloud.
-func tokenDir(file string) string {
+// isCacheableNewFile reports whether a newly-appeared file under the box home is
+// worth caching as login state — i.e. not shell/cache noise.
+func isCacheableNewFile(file string) bool {
 	const root = "/root/"
 	if !strings.HasPrefix(file, root) {
-		return ""
+		return false
 	}
-	parts := strings.Split(strings.TrimPrefix(file, root), "/")
-	if len(parts) == 0 || parts[0] == "" {
-		return ""
-	}
-	switch parts[0] {
+	top := strings.SplitN(strings.TrimPrefix(file, root), "/", 2)[0]
+	switch top {
 	case ".bash_history", ".bashrc", ".profile", ".bash_logout", ".cache",
 		".wget-hsts", ".lesshst", ".viminfo", ".sudo_as_admin_successful":
-		return ""
+		return false
 	}
-	// Tools nest provider state under ~/.config/<provider>; keep that level so we
-	// cache the provider's dir, not all of ~/.config.
-	if parts[0] == ".config" && len(parts) >= 2 {
-		return root + ".config/" + parts[1]
-	}
-	return root + parts[0]
+	return true
 }
 
 func (d *DiscoveryBroker) ask(label, def string) string {

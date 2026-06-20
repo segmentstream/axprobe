@@ -53,6 +53,17 @@ func (s *Store) SetKeychainOnly(name string, value []byte) error {
 	return keychainSet(s.account(name), value)
 }
 
+// Delete removes a stored credential from both backends. A missing item is not
+// an error — used by reset to purge a scenario's cached secrets so an auth run
+// starts cold.
+func (s *Store) Delete(name string) {
+	if keychainAvailable() {
+		_ = exec.Command("security", "delete-generic-password",
+			"-s", keychainService, "-a", s.account(name)).Run()
+	}
+	_ = os.Remove(filepath.Join(fileDir(), s.account(name)))
+}
+
 // Backend reports which store satisfied the last lookup, for display.
 func Backend() string {
 	if keychainAvailable() {
@@ -69,8 +80,17 @@ func keychainAvailable() bool {
 	return err == nil
 }
 
+// maxKeychainValue caps the base64 payload passed on the `security` command line.
+// The value rides in argv (ARG_MAX is ~1MB on macOS), so a clear error beats a
+// cryptic "argument list too long". Real oauth credentials are a few KB; hitting
+// this means token_paths captured too much (e.g. an installed binary).
+const maxKeychainValue = 256 * 1024
+
 func keychainSet(account string, value []byte) error {
 	enc := base64.StdEncoding.EncodeToString(value)
+	if len(enc) > maxKeychainValue {
+		return fmt.Errorf("value too large to cache (%d KB) — token_paths likely too broad", len(value)/1024)
+	}
 	// -U updates if the item already exists.
 	cmd := exec.Command("security", "add-generic-password",
 		"-U", "-s", keychainService, "-a", account, "-w", enc)
