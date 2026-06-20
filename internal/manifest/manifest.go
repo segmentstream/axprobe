@@ -41,6 +41,20 @@ type Manifest struct {
 	// Expect is the AX bar (the PM-owned "definition of done"). When set, the run
 	// passes only if the result meets it; otherwise axprobe exits non-zero (CI gate).
 	Expect *Expect `yaml:"expect,omitempty"`
+
+	// Reset returns the fixture to a clean baseline BEFORE the run, so a re-run
+	// starts from scratch. The box is disposable (in-box files reset for free);
+	// reset covers cross-run state.
+	Reset *Reset `yaml:"reset,omitempty"`
+}
+
+// Reset declares how to clear a fixture's persistent state before a run. Secrets
+// purges this scenario's cached credentials (so an auth fixture runs cold instead
+// of restoring a token); Paths clears the CONTENTS of box directories (keeping the
+// dirs) — e.g. a mounted/persistent project folder where `init` ran.
+type Reset struct {
+	Secrets bool     `yaml:"secrets,omitempty"`
+	Paths   []string `yaml:"paths,omitempty"`
 }
 
 // Expect is a scenario's AX assertions. Pointers/zero distinguish "not asserted".

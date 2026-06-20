@@ -47,6 +47,41 @@ func (b *LocalDockerBox) Up() error {
 	if b.containerID == "" {
 		return fmt.Errorf("docker run: empty container id; stderr: %s", strings.TrimSpace(stderr))
 	}
+	if err := b.startLoopbackRelays(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// startLoopbackRelays makes a published port reach a server that binds the
+// container's loopback. Docker forwards host:PORT to the container's eth0, but an
+// oauth loopback server binds 127.0.0.1:PORT inside the box — traffic arriving on
+// eth0 can't reach it, so the browser callback fails ("this page isn't working").
+// A socat relay bound to the container's own IP bridges eth0:PORT -> 127.0.0.1:PORT.
+// It binds the container IP (not 0.0.0.0), so it never conflicts with the app's
+// own 127.0.0.1 bind. No-op when no ports are published.
+func (b *LocalDockerBox) startLoopbackRelays() error {
+	if len(b.Ports) == 0 {
+		return nil
+	}
+	if _, stderr, err := capture("docker", "exec", b.containerID, "sh", "-c",
+		"command -v socat >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq socat >/dev/null 2>&1)"); err != nil {
+		return fmt.Errorf("install socat for loopback relay: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	ip, _, err := capture("docker", "exec", b.containerID, "sh", "-c", "hostname -I | awk '{print $1}'")
+	if err != nil {
+		return fmt.Errorf("resolve container ip for relay: %w", err)
+	}
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return fmt.Errorf("loopback relay: empty container ip")
+	}
+	for _, p := range b.Ports {
+		cmd := fmt.Sprintf("socat TCP-LISTEN:%d,fork,reuseaddr,bind=%s TCP:127.0.0.1:%d", p, ip, p)
+		if err := exec.Command("docker", "exec", "-d", b.containerID, "sh", "-c", cmd).Run(); err != nil {
+			return fmt.Errorf("start loopback relay on port %d: %w", p, err)
+		}
+	}
 	return nil
 }
 

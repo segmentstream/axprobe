@@ -394,8 +394,9 @@ func runProbes(b box.Box, m *manifest.Manifest) error {
 // emits both a human summary and a JSON report artifact.
 func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended bool) error {
 	store := secrets.New(m.Name)
+	applyReset(m, b, store) // clear cross-run state so the fixture starts from a known baseline
 	br := broker.New(m, b, store, unattended, os.Stdin, os.Stdout)
-	br.Prime() // restore any cached oauth tokens before driving
+	br.Prime() // restore any cached oauth tokens before driving (a no-op after a secrets reset)
 
 	res, err := driver.New(b, m, client, br).Run(context.Background())
 	if err != nil {
@@ -427,6 +428,29 @@ func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath s
 		fmt.Println("\n✓ AX expectations met")
 	}
 	return nil
+}
+
+// applyReset clears a fixture's cross-run state before the run so a re-run starts
+// from a known baseline. The disposable box already resets in-box files; this
+// covers what survives: cached secrets (Keychain) and the contents of declared
+// persistent paths.
+func applyReset(m *manifest.Manifest, b box.Box, store *secrets.Store) {
+	if m.Reset == nil {
+		return
+	}
+	if m.Reset.Secrets {
+		for _, c := range m.Credentials {
+			store.Delete(c.Name)
+			store.Delete(c.Name + ".token") // oauth token cache key
+		}
+		fmt.Println("▸ reset:    purged cached secrets (cold auth)")
+	}
+	for _, p := range m.Reset.Paths {
+		// Clear the CONTENTS, keep the directory itself.
+		if _, err := b.Exec(fmt.Sprintf("find %q -mindepth 1 -delete 2>/dev/null || true", p)); err == nil {
+			fmt.Printf("▸ reset:    cleared contents of %s\n", p)
+		}
+	}
 }
 
 // printResult renders one command's output, indented, with its exit code.
