@@ -418,14 +418,17 @@ func exploreCmd(intent, model, name string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("\n▸ outcome:  %s (goal_reached=%v, gates=%d, discovered=%d creds)\n",
-		res.Outcome, res.GoalReached, len(res.Gates), len(disc.Discovered))
-	fmt.Printf("▸ manifest: %s  — review & commit\n", path)
+
+	// A drive produces an AX report whether it is authoring (explore) or measuring
+	// (run) — the first-contact friction is the same signal.
+	emitReport(name, res, "")
+
+	fmt.Printf("\n▸ manifest: %s  — review & commit (%d creds discovered)\n", path, len(disc.Discovered))
 
 	// Lint the goal against the tool vocabulary the run actually used: if the
 	// intent named the tool's own commands/flags/states, it spoon-feeds the agent.
 	if warns := lint.Goal(m.Goal, res.Commands); len(warns) > 0 {
-		fmt.Println("\n⚠ goal lint — the intent leaks tool-interface detail; prefer user-level intent:")
+		fmt.Println("⚠ goal lint — the intent leaks tool-interface detail; prefer user-level intent:")
 		for _, w := range warns {
 			fmt.Printf("    - %s\n", w)
 		}
@@ -471,6 +474,23 @@ func runProbes(b box.Box, m *manifest.Manifest) error {
 	return nil
 }
 
+// emitReport builds the AX report from a drive, prints the human summary, and
+// writes the JSON artifact. The report is a property of any drive — run uses it
+// for the expect gate, explore for first-contact findings.
+func emitReport(name string, res *driver.Result, reportPath string) report.Report {
+	rep := report.From(name, res)
+	rep.PrintHuman(os.Stdout)
+	if reportPath == "" {
+		reportPath = name + ".report.json"
+	}
+	if err := rep.WriteJSON(reportPath); err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: could not write report: %v\n", err)
+	} else {
+		fmt.Printf("\n▸ report:   %s\n", reportPath)
+	}
+	return rep
+}
+
 // runDriver is the Layer 1 LLM driver. It collects the approved metrics and
 // emits both a human summary and a JSON report artifact.
 func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended bool) error {
@@ -484,17 +504,7 @@ func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath s
 		return err
 	}
 
-	rep := report.From(m.Name, res)
-	rep.PrintHuman(os.Stdout)
-
-	if reportPath == "" {
-		reportPath = m.Name + ".report.json"
-	}
-	if err := rep.WriteJSON(reportPath); err != nil {
-		fmt.Fprintf(os.Stderr, "  warning: could not write report: %v\n", err)
-	} else {
-		fmt.Printf("\n▸ report:   %s\n", reportPath)
-	}
+	rep := emitReport(m.Name, res, reportPath)
 
 	// AX bar: if the scenario declares `expect`, fail the run (non-zero exit) when
 	// the result misses it — this is the CI gate / TDD red-green signal.
