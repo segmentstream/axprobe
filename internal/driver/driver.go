@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -330,9 +331,18 @@ func isHelpInvocation(cmd string) bool {
 }
 
 // sameBaseCommand compares the first up-to-3 whitespace tokens of two commands
-// (e.g. "gh auth login" matches "gh auth login --hostname … --web").
+// (e.g. "gh auth login" matches "gh auth login --hostname … --web"). The first
+// token — the binary — is compared by basename, so an agent invoking the tool by
+// absolute path (/root/.../bin/segmentstream …) still matches a declared
+// "segmentstream …" login command.
 func sameBaseCommand(a, b string) bool {
 	fa, fb := strings.Fields(a), strings.Fields(b)
+	if len(fa) > 0 {
+		fa[0] = path.Base(fa[0])
+	}
+	if len(fb) > 0 {
+		fb[0] = path.Base(fb[0])
+	}
 	n := 3
 	if len(fa) < n {
 		n = len(fa)

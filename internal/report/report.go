@@ -59,8 +59,8 @@ func From(scenario string, r *driver.Result) Report {
 		Steps:              r.Steps,
 		CommandsRun:        r.CommandsRun,
 		DurationSeconds:    round1(r.DurationSec),
-		Observations:       r.Observations,
-		FalseErrors:        r.FalseErrors,
+		Observations:       nonNilObs(r.Observations),
+		FalseErrors:        nonNilFE(r.FalseErrors),
 		Tokens: Tokens{
 			Prompt:     r.Tokens.PromptTokens,
 			Completion: r.Tokens.CompletionTokens,
@@ -163,6 +163,20 @@ func categoryTally(obs []driver.Observation) string {
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}
+	}
+	return s
+}
+
+func nonNilObs(s []driver.Observation) []driver.Observation {
+	if s == nil {
+		return []driver.Observation{}
+	}
+	return s
+}
+
+func nonNilFE(s []driver.FalseError) []driver.FalseError {
+	if s == nil {
+		return []driver.FalseError{}
 	}
 	return s
 }
