@@ -22,6 +22,7 @@ import (
 	"github.com/segmentstream/axprobe/internal/dotenv"
 	"github.com/segmentstream/axprobe/internal/driver"
 	"github.com/segmentstream/axprobe/internal/explore"
+	"github.com/segmentstream/axprobe/internal/lint"
 	"github.com/segmentstream/axprobe/internal/llm"
 	"github.com/segmentstream/axprobe/internal/manifest"
 	"github.com/segmentstream/axprobe/internal/report"
@@ -36,6 +37,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
 	fmt.Fprintln(os.Stderr, "  axprobe probe [--image <img>] <command> [<command>...]")
 	fmt.Fprintln(os.Stderr, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
+	fmt.Fprintln(os.Stderr, "  axprobe lint [--strict] [<scenario-name>]")
+	fmt.Fprintln(os.Stderr, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
 	os.Exit(2)
 }
 
@@ -54,8 +57,49 @@ func main() {
 		exploreMain()
 	case "probe":
 		probeMain()
+	case "lint":
+		lintMain()
 	default:
 		usage()
+	}
+}
+
+// lintMain warns when a scenario goal leaks tool-interface detail (command names,
+// flags, internal states, transport jargon) instead of reading as user intent.
+// Standalone lint is generic (no run); explore lints with the run's vocabulary.
+func lintMain() {
+	fs := flag.NewFlagSet("lint", flag.ExitOnError)
+	strict := fs.Bool("strict", false, "Exit non-zero if any goal has leakage warnings.")
+	pos := parsePositionals(fs, os.Args[2:])
+	arg := ""
+	if len(pos) >= 1 {
+		arg = pos[0]
+	}
+	manifests, err := resolveManifests(arg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	leaked := false
+	for _, mp := range manifests {
+		m, err := manifest.Load(mp)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("▸ lint:     %s\n", m.Name)
+		warns := lint.Goal(m.Goal, nil)
+		if len(warns) == 0 {
+			fmt.Println("    ✓ goal reads as user-level intent")
+			continue
+		}
+		leaked = true
+		for _, w := range warns {
+			fmt.Printf("    ⚠ %s\n", w)
+		}
+	}
+	if *strict && leaked {
+		os.Exit(1)
 	}
 }
 
@@ -349,6 +393,15 @@ func exploreCmd(intent, model, name string) error {
 	fmt.Printf("\n▸ outcome:  %s (goal_reached=%v, gates=%d, discovered=%d creds)\n",
 		res.Outcome, res.GoalReached, len(res.Gates), len(disc.Discovered))
 	fmt.Printf("▸ manifest: %s  — review & commit\n", path)
+
+	// Lint the goal against the tool vocabulary the run actually used: if the
+	// intent named the tool's own commands/flags/states, it spoon-feeds the agent.
+	if warns := lint.Goal(m.Goal, res.Commands); len(warns) > 0 {
+		fmt.Println("\n⚠ goal lint — the intent leaks tool-interface detail; prefer user-level intent:")
+		for _, w := range warns {
+			fmt.Printf("    - %s\n", w)
+		}
+	}
 	return nil
 }
 

@@ -87,6 +87,7 @@ type Result struct {
 	Gates         []string // gate_details; human_interventions (HIC) = len(Gates)
 	Steps         int
 	CommandsRun   int
+	Commands      []string // commands the agent ran (tool-vocabulary source for the goal lint)
 	DurationSec   float64
 	Observations  []Observation
 	FalseErrors   []FalseError
@@ -236,6 +237,7 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 			return fmt.Sprintf("box error: %v", err), false
 		}
 		res.CommandsRun++
+		res.Commands = append(res.Commands, cmd)
 		printResult(r)
 		if looksLikeFalseError(r) {
 			res.FalseErrors = append(res.FalseErrors, FalseError{
