@@ -41,10 +41,14 @@ func WithModel(ctx context.Context, client *llm.Client, r report.Report) (string
 	return report.RenderFinding(r, f.Title, f.Summary, f.WhyItMatters, f.IdealFlow, f.Request), nil
 }
 
-const reviewerInstructions = `You are an AX reviewer. Given a run report (an agent driving a CLI toward a goal), identify the single most important agentic-experience defect the run reveals and produce a finding.
+const reviewerInstructions = `You are an AX reviewer. Given a run report (an agent driving a CLI toward a goal), produce a finding about the agentic-experience defect(s) the run reveals.
 Return ONLY a JSON object, no prose:
-{"title":"<the defect in one line>","summary":"<one paragraph>","why_it_matters":["<principle broken + impact>", "..."],"ideal_flow":"<a short fenced transcript of what SHOULD have happened>","request":["<concrete change>", "..."]}
-Base everything ONLY on what the transcript shows — do not invent commands the run did not imply. Name the principle(s) broken (self-sufficiency, honest-state, missing-guidance, discover-don't-ask, …). If the run reveals no real defect, set "title" to "".`
+{"title":"<the defect in one line, WITHOUT an 'Agentic UX:' prefix>","summary":"<one paragraph>","why_it_matters":["<principle broken + impact>", "..."],"ideal_flow":"<a short fenced transcript of what SHOULD have happened>","request":["<concrete change>", "..."]}
+Rules:
+- TRACE TO COMPLETION, not to the first friction. Identify the wall that actually blocks reaching the GOAL — it is often a step BEYOND where the agent stopped (e.g. the agent fixed the binding but still could not write the transform). Cover every blocking gap, not just the first.
+- NAME THE DEEPEST MISSING CAPABILITY the agent would have needed — including ones it never reached. Ask: to finish, what did it have to know or do that the tool gave no way to (e.g. could it even inspect the data it must transform?).
+- Base everything ONLY on what the transcript shows — do not invent commands the run did not imply.
+- Name the principle(s) broken (self-sufficiency, honest-state, missing-guidance, discover-don't-ask, …). If the run reveals no real defect, set "title" to "".`
 
 func reportContext(r report.Report) string {
 	var b strings.Builder

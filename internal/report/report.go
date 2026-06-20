@@ -197,6 +197,8 @@ func ObservedBlock(r Report) string {
 // scaffolded by Draft, or written by the review agent.
 func RenderFinding(r Report, title, summary string, why []string, ideal string, request []string) string {
 	var b strings.Builder
+	// Some reviewers prepend "Agentic UX:" themselves; strip it so we don't double it.
+	title = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(title), "Agentic UX:"))
 	fmt.Fprintf(&b, "Title: Agentic UX: %s\n\n", title)
 	fmt.Fprintf(&b, "## Summary\n%s\n\n", summary)
 	fmt.Fprintf(&b, "## Observed\n%s\n", ObservedBlock(r))

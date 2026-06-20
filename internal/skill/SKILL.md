@@ -97,6 +97,12 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 
 ## AX-defect checklist (what to file)
 
+- **Trace to completion, not to the first friction.** The wall that matters is the
+  one that blocks the GOAL — often a step *beyond* where the agent stopped (it
+  bound the source but still couldn't write the transform). Name the deepest
+  missing capability it would have needed, including ones it never reached (could
+  it even *inspect* the data it must transform?). Fixing only the first friction
+  leaves the goal unreachable.
 - Does the tool **guide** the agent (help text, structured next-actions), or did it
   have to guess? A tool drivable from `--help` alone scores high.
 - **Self-sufficiency**: can the agent *complete* the goal using only the tool, or
