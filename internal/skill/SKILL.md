@@ -85,6 +85,13 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 
 - Does the tool **guide** the agent (help text, structured next-actions), or did it
   have to guess? A tool drivable from `--help` alone scores high.
+- **Self-sufficiency**: can the agent *complete* the goal using only the tool, or
+  does it hit a wall it must leave the tool to cross (e.g. the tool can *reference*
+  a dataset but not *create* one)? A capability gap is a defect — the fix is
+  explicit self-service (create behind a flag/confirmation + a clear next-action),
+  not pushing the step onto a human.
+- **Honest state**: never report success for a state that is not real (e.g.
+  `configure` calling a non-existent dataset "valid", then failing at `test`).
 - **Non-zero exit on a normal state** (a "false error")?
 - **More steps than necessary** to reach the goal?
 - **Mutations without `--dry-run`/confirmation** — the agent can change real state
@@ -92,6 +99,15 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 - Did the agent have to **ask a human** for something the tool could have
   discovered itself?
 - Does the tool **ship/embed its own agent guidance**? (An AX criterion in itself.)
+
+## Decide vs ask the product owner
+
+Apply these principles and **decide**; surface the decision + a one-line reason for
+a quick veto, rather than asking permission. Ask the product owner only for:
+(1) product priorities / what to build next, (2) irreversible external actions on
+shared systems, (3) access or credentials only they hold, (4) a genuinely novel
+situation no principle covers. Mechanical AX judgments are yours to make — that is
+how the human gets asked fewer questions over time.
 
 File findings as **GitHub issues in the tool's repo, in English**, framed as
 *Agentic UX*: what the agent experienced, why it matters, and a concrete request.
