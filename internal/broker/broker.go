@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/segmentstream/axprobe/internal/box"
+	"github.com/segmentstream/axprobe/internal/browser"
 	"github.com/segmentstream/axprobe/internal/manifest"
 	"github.com/segmentstream/axprobe/internal/secrets"
 )
@@ -114,7 +115,7 @@ func (br *Broker) resolveOAuth(c manifest.Credential) (string, bool) {
 	fmt.Fprintf(br.out, "\n🔓 browser login required for %q (%s) — complete it when prompted below:\n", c.Name, mode)
 	fmt.Fprintf(br.out, "   $ %s\n", c.LoginCommand)
 	fmt.Fprintln(br.out, "   ──────── login output ────────")
-	res, err := br.box.ExecStream(c.LoginCommand, br.out)
+	res, err := br.box.ExecStream(c.LoginCommand, browser.TeeOpen(br.out))
 	fmt.Fprintln(br.out, "   ──────────────────────────────")
 	if err != nil {
 		fmt.Fprintf(br.out, "  oauth error: %v — stopping.\n", err)

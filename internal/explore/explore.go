@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/segmentstream/axprobe/internal/box"
+	"github.com/segmentstream/axprobe/internal/browser"
 	"github.com/segmentstream/axprobe/internal/llm"
 	"github.com/segmentstream/axprobe/internal/manifest"
 	"github.com/segmentstream/axprobe/internal/secrets"
@@ -185,7 +186,7 @@ func (d *DiscoveryBroker) resolveOAuth(needs string, p credProposal) (string, bo
 	fmt.Fprintln(d.out, "   complete the browser login when the URL appears below:")
 	fmt.Fprintf(d.out, "   $ %s\n", login)
 	fmt.Fprintln(d.out, "   ──────── login output ────────")
-	res, err := d.box.ExecStream(login, d.out)
+	res, err := d.box.ExecStream(login, browser.TeeOpen(d.out))
 	fmt.Fprintln(d.out, "   ──────────────────────────────")
 	if err != nil {
 		fmt.Fprintf(d.out, "   login error: %v — stopping.\n", err)
