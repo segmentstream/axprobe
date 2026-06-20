@@ -631,9 +631,13 @@ func emitReport(name string, res *driver.Result, reportPath string) report.Repor
 // emits both a human summary and a JSON report artifact.
 func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended, reset bool) error {
 	store := secrets.New(m.Name)
-	applyReset(m, store, reset) // start cold if the fixture declares it or --reset was passed
+	cold := reset || (m.Reset != nil && m.Reset.Secrets)
 	br := broker.New(m, b, store, unattended, os.Stdin, os.Stdout)
-	br.Prime() // restore any cached oauth tokens before driving (a no-op after a secrets reset)
+	if cold {
+		fmt.Println("▸ cold:     skipping cached-login restore (auth runs fresh)")
+	} else {
+		br.Prime() // restore the shared warehouse token (warm) before driving
+	}
 
 	res, err := driver.New(b, m, client, br).Run(context.Background())
 	if err != nil {
@@ -655,21 +659,6 @@ func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath s
 		fmt.Println("\n✓ AX expectations met")
 	}
 	return nil
-}
-
-// applyReset purges this scenario's cached credentials so the run starts cold —
-// either because the fixture declares it (auth-test fixture) or because the
-// operator passed --reset (a deliberate "start over"). It never touches a mounted
-// workdir: that is the user's real repo. In-box files reset for free via the box.
-func applyReset(m *manifest.Manifest, store *secrets.Store, force bool) {
-	if !force && (m.Reset == nil || !m.Reset.Secrets) {
-		return
-	}
-	for _, c := range m.Credentials {
-		store.Delete(c.Name)
-		store.Delete(c.Name + ".token") // oauth token cache key
-	}
-	fmt.Println("▸ reset:    purged cached secrets (cold)")
 }
 
 // openEvents directs the JSONL event stream to a file (for `tail -f | jq`

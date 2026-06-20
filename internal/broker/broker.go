@@ -131,12 +131,14 @@ func (br *Broker) resolveOAuth(c manifest.Credential) (string, bool) {
 	return fmt.Sprintf("Browser login %q completed in the sandbox; the tool is now authenticated. Continue toward the goal.", c.Name), true
 }
 
-// restoreToken injects a cached token for c into the box. Returns true on success.
+// restoreToken injects the cached warehouse token into the box. Returns true on
+// success. The token is shared (app-level, keyed by the login command's base), so
+// a login from any scenario warms every scenario on the same warehouse.
 func (br *Broker) restoreToken(c manifest.Credential) bool {
 	if len(c.TokenPaths) == 0 {
 		return false
 	}
-	data, ok := br.store.Get(tokenKey(c.Name))
+	data, ok := secrets.GetApp(tokenSharedKey(c))
 	if !ok {
 		return false
 	}
@@ -144,28 +146,40 @@ func (br *Broker) restoreToken(c manifest.Credential) bool {
 		fmt.Fprintf(br.out, "  cached token restore failed: %v\n", err)
 		return false
 	}
-	fmt.Fprintf(br.out, "  ↻ reused cached login for %q (no browser)\n", c.Name)
+	fmt.Fprintf(br.out, "  ↻ reused cached login (no browser)\n")
 	return true
 }
 
-// cacheToken extracts c's token files from the box and stores them (Keychain only).
+// cacheToken extracts c's token files from the box and stores them (Keychain
+// only) under the shared key, so the next run on the same warehouse is warm.
 func (br *Broker) cacheToken(c manifest.Credential) {
 	if len(c.TokenPaths) == 0 {
 		return
 	}
 	data, err := br.box.ArchiveOut(c.TokenPaths)
 	if err != nil {
-		fmt.Fprintf(br.out, "  warning: could not capture token for %q: %v\n", c.Name, err)
+		fmt.Fprintf(br.out, "  warning: could not capture token: %v\n", err)
 		return
 	}
-	if err := br.store.SetKeychainOnly(tokenKey(c.Name), data); err != nil {
-		fmt.Fprintf(br.out, "  warning: could not cache token for %q: %v\n", c.Name, err)
+	if err := secrets.SetApp(tokenSharedKey(c), data); err != nil {
+		fmt.Fprintf(br.out, "  warning: could not cache token: %v\n", err)
 		return
 	}
-	fmt.Fprintf(br.out, "  ✓ cached login for %q (next run needs no browser)\n", c.Name)
+	fmt.Fprintf(br.out, "  ✓ cached login for reuse (next run needs no browser)\n")
 }
 
-func tokenKey(name string) string { return name + ".token" }
+// tokenSharedKey derives a stable cache key from the login command's base (flags
+// stripped), so scenarios sharing a warehouse share one cached token.
+func tokenSharedKey(c manifest.Credential) string {
+	var base []string
+	for _, f := range strings.Fields(c.LoginCommand) {
+		if strings.HasPrefix(f, "-") {
+			break
+		}
+		base = append(base, f)
+	}
+	return "token/" + strings.Join(base, " ")
+}
 
 func (br *Broker) nextPending() (manifest.Credential, bool) {
 	for _, c := range br.creds {
