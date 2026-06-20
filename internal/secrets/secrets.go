@@ -64,6 +64,21 @@ func (s *Store) Delete(name string) {
 	_ = os.Remove(filepath.Join(fileDir(), s.account(name)))
 }
 
+// SetApp stores an app-level (non-scenario) secret in the Keychain only — e.g.
+// the OpenRouter API key. Namespaced under Service "axprobe", Account "app/<name>",
+// so it never collides with another app's items or with scenario credentials.
+func SetApp(name string, value []byte) error {
+	if !keychainAvailable() {
+		return fmt.Errorf("keychain unavailable on this host (set OPENROUTER_API_KEY in the environment instead)")
+	}
+	return keychainSet("app/"+name, value)
+}
+
+// GetApp reads an app-level secret from the Keychain.
+func GetApp(name string) ([]byte, bool) {
+	return keychainGet("app/" + name)
+}
+
 // Backend reports which store satisfied the last lookup, for display.
 func Backend() string {
 	if keychainAvailable() {

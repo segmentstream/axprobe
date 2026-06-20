@@ -29,7 +29,7 @@ type Client struct {
 func New(model string) (*Client, error) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {
-		return nil, fmt.Errorf("OPENROUTER_API_KEY is not set (export it to use the LLM driver)")
+		return nil, fmt.Errorf("no OpenRouter API key — run `axprobe key set` (stored in your Keychain) or export OPENROUTER_API_KEY")
 	}
 	return &Client{
 		APIKey: key,

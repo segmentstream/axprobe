@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -47,6 +48,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
 	fmt.Fprintln(os.Stderr, "  axprobe review [--model <id>] <report.json>")
 	fmt.Fprintln(os.Stderr, "      AX-review a run report into a paste-ready finding draft (does not file)")
+	fmt.Fprintln(os.Stderr, "  axprobe key set")
+	fmt.Fprintln(os.Stderr, "      store your OpenRouter API key in the Keychain (read from stdin)")
 	os.Exit(2)
 }
 
@@ -58,6 +61,13 @@ func main() {
 		dotenv.Load(filepath.Join(home, ".axprobe", ".env"))
 	}
 	dotenv.Load(".env")
+	// Fall back to the Keychain (axprobe/app/openrouter) when no env/.env key is
+	// set — the preferred, plaintext-free home for the key.
+	if os.Getenv("OPENROUTER_API_KEY") == "" {
+		if v, ok := secrets.GetApp("openrouter"); ok {
+			os.Setenv("OPENROUTER_API_KEY", string(v))
+		}
+	}
 
 	if len(os.Args) < 2 {
 		usage()
@@ -75,9 +85,32 @@ func main() {
 		skillMain()
 	case "review":
 		reviewMain()
+	case "key":
+		keyMain()
 	default:
 		usage()
 	}
+}
+
+// keyMain stores the OpenRouter API key in the Keychain (axprobe/app/openrouter),
+// read from stdin so it never lands in argv or shell history.
+func keyMain() {
+	if len(os.Args) < 3 || os.Args[2] != "set" {
+		fmt.Fprintln(os.Stderr, "usage: axprobe key set        # then paste the key (or pipe: pbpaste | axprobe key set)")
+		os.Exit(2)
+	}
+	fmt.Fprintln(os.Stderr, "Paste your OpenRouter API key and press Enter (input is not hidden):")
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	key := strings.TrimSpace(line)
+	if key == "" {
+		fmt.Fprintln(os.Stderr, "axprobe: no key provided")
+		os.Exit(1)
+	}
+	if err := secrets.SetApp("openrouter", []byte(key)); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ stored OpenRouter key in the Keychain (axprobe/app/openrouter)")
 }
 
 // reviewMain is the AX review agent: from a run report it drafts a paste-ready
