@@ -470,7 +470,9 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 	}
 	ports = append(ports, extraPorts...)
 	if workdir != "" {
-		warnWorkdirSecrets(workdir)
+		if err := checkWorkdirSecrets(workdir); err != nil {
+			return nil, nil, err
+		}
 	}
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
 	b.Workdir = workdir // live journey: mount the real project; "" = disposable
@@ -684,24 +686,29 @@ func openEvents(path string) {
 	events.SetOutput(f)
 }
 
-// warnWorkdirSecrets warns loudly when a mounted workdir holds secret-looking
-// files: a --workdir bind-mount makes everything in it readable by the sandboxed
-// agent. axprobe's own key belongs in ~/.axprobe/.env (never mounted); other
-// secrets are the user's to move out of the mounted project.
-func warnWorkdirSecrets(workdir string) {
+// checkWorkdirSecrets REFUSES to mount a workdir holding secret-looking files: a
+// --workdir bind-mount makes everything in it readable by the sandboxed agent,
+// and a deliberately-dumb agent does read them (a prompt prohibition is not
+// reliable — observed live). Warning was not enough; we abort. Override with
+// AXPROBE_ALLOW_WORKDIR_SECRETS=1 if you accept the exposure.
+func checkWorkdirSecrets(workdir string) error {
 	var hits []string
 	for _, pat := range []string{".env", ".env.*", "*.pem", "*credential*.json", "*key*.json", "*secret*"} {
 		m, _ := filepath.Glob(filepath.Join(workdir, pat))
-		hits = append(hits, m...)
+		for _, h := range m {
+			hits = append(hits, filepath.Base(h))
+		}
 	}
 	if len(hits) == 0 {
-		return
+		return nil
 	}
-	fmt.Println("⚠ SECURITY: --workdir contains secret-looking files the sandboxed agent can read:")
-	for _, h := range hits {
-		fmt.Printf("    %s\n", filepath.Base(h))
+	if os.Getenv("AXPROBE_ALLOW_WORKDIR_SECRETS") != "" {
+		fmt.Printf("⚠ --workdir has secret-looking files (%s); proceeding (AXPROBE_ALLOW_WORKDIR_SECRETS set)\n", strings.Join(hits, ", "))
+		return nil
 	}
-	fmt.Println("    Move them out of the mounted project (axprobe's key belongs in ~/.axprobe/.env).")
+	return fmt.Errorf("refusing to mount --workdir — it holds secret-looking files the sandboxed agent could read: %s\n"+
+		"  move them out (axprobe's key belongs in the Keychain via `axprobe key set`), or set AXPROBE_ALLOW_WORKDIR_SECRETS=1 to override",
+		strings.Join(hits, ", "))
 }
 
 // printResult renders one command's output, indented, with its exit code.
