@@ -25,3 +25,21 @@ func TestGoalClean(t *testing.T) {
 		t.Errorf("clean user-level goal should not warn; got:\n%s", strings.Join(w, "\n"))
 	}
 }
+
+func TestGoalDoesNotFlagFlagValuesOrBinaryPath(t *testing.T) {
+	// Reproduces the false-positive from the live segmentstream.com run: the user's
+	// own project/dataset values and the binary name must NOT be flagged.
+	goal := "Connect segmentstream.com's analytics to BigQuery using my Google account, " +
+		"into project segmentstream-dev, a dataset called segmentstream_com in US, and make sure it works."
+	vocab := []string{
+		"/root/.segmentstream/bin/segmentstream warehouse configure --project segmentstream-dev --dataset segmentstream_com --location US --create-dataset",
+		"/root/.segmentstream/bin/segmentstream warehouse test",
+	}
+	w := Goal(goal, vocab)
+	joined := strings.Join(w, "\n")
+	for _, bad := range []string{"segmentstream", "project", "dataset", "segmentstream-dev", "segmentstream_com"} {
+		if strings.Contains(joined, "\""+bad+"\"") {
+			t.Errorf("should not flag %q (user value / binary); got:\n%s", bad, joined)
+		}
+	}
+}

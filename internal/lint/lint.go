@@ -73,19 +73,24 @@ func Goal(goal string, toolVocab []string) []string {
 }
 
 // vocabSet reduces raw command strings to the distinctive SUBcommand tokens worth
-// flagging: non-flag, length>=3, not an everyday English stopword. The first
-// token of each command — the tool's binary/product name (e.g. "segmentstream")
-// — is dropped: it is the product name and legitimately appears in a user goal.
+// flagging. For each command it skips the binary (first field — often a path like
+// /root/.../segmentstream) and stops at the first flag, so flag VALUES (the user's
+// own project/dataset names) and the binary/product name are never treated as tool
+// commands. Only the words between binary and the first flag — the subcommands —
+// count (non-stopword, length>=3).
 func vocabSet(toolVocab []string) map[string]bool {
 	set := map[string]bool{}
 	for _, raw := range toolVocab {
-		toks := wordRe.FindAllString(strings.ToLower(raw), -1)
-		if len(toks) > 1 {
-			toks = toks[1:] // drop the binary name
-		}
-		for _, t := range toks {
-			if len(t) >= 3 && !stopwords[t] {
-				set[t] = true
+		for i, f := range strings.Fields(raw) {
+			if i == 0 {
+				continue // binary / path
+			}
+			if strings.HasPrefix(f, "-") {
+				break // first flag → flags and their values are not commands
+			}
+			f = strings.ToLower(f)
+			if len(f) >= 3 && !stopwords[f] {
+				set[f] = true
 			}
 		}
 	}
