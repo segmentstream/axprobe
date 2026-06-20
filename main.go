@@ -51,8 +51,12 @@ func usage() {
 }
 
 func main() {
-	// Load a folder-local .env (e.g. OPENROUTER_API_KEY) before reading any key.
-	// Real environment variables still win.
+	// Load the OpenRouter key etc. Real environment variables win. A global
+	// ~/.axprobe/.env is preferred and loaded first, so a secret never has to live
+	// in a project .env that a --workdir bind-mount would expose to the sandbox.
+	if home, err := os.UserHomeDir(); err == nil {
+		dotenv.Load(filepath.Join(home, ".axprobe", ".env"))
+	}
 	dotenv.Load(".env")
 
 	if len(os.Args) < 2 {
@@ -388,6 +392,9 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 		}
 	}
 	ports = append(ports, extraPorts...)
+	if workdir != "" {
+		warnWorkdirSecrets(workdir)
+	}
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
 	b.Workdir = workdir // live journey: mount the real project; "" = disposable
 	fmt.Printf("▸ box up:   %s\n", m.Box.Image)
@@ -584,6 +591,26 @@ func applyReset(m *manifest.Manifest, store *secrets.Store, force bool) {
 		store.Delete(c.Name + ".token") // oauth token cache key
 	}
 	fmt.Println("▸ reset:    purged cached secrets (cold)")
+}
+
+// warnWorkdirSecrets warns loudly when a mounted workdir holds secret-looking
+// files: a --workdir bind-mount makes everything in it readable by the sandboxed
+// agent. axprobe's own key belongs in ~/.axprobe/.env (never mounted); other
+// secrets are the user's to move out of the mounted project.
+func warnWorkdirSecrets(workdir string) {
+	var hits []string
+	for _, pat := range []string{".env", ".env.*", "*.pem", "*credential*.json", "*key*.json", "*secret*"} {
+		m, _ := filepath.Glob(filepath.Join(workdir, pat))
+		hits = append(hits, m...)
+	}
+	if len(hits) == 0 {
+		return
+	}
+	fmt.Println("⚠ SECURITY: --workdir contains secret-looking files the sandboxed agent can read:")
+	for _, h := range hits {
+		fmt.Printf("    %s\n", filepath.Base(h))
+	}
+	fmt.Println("    Move them out of the mounted project (axprobe's key belongs in ~/.axprobe/.env).")
 }
 
 // printResult renders one command's output, indented, with its exit code.

@@ -19,6 +19,11 @@ flags, do not guess secret values, and NEVER run filesystem-wide searches
 is absent, call gate() immediately. A good tool should be drivable without
 cleverness.
 
+NEVER read secret or credential files to obtain a login — do not cat, grep, or
+search for .env files, *.pem, *key*.json, credentials, or tokens anywhere,
+including the working directory. If authentication is required, call gate(); the
+harness provides credentials. Reading a secret is never the right move.
+
 How to work:
 - Use bash() to make progress and to read the tool's own output and state.
 - Prefer reading what the tool tells you over guessing.
