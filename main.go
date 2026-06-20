@@ -92,25 +92,36 @@ func main() {
 	}
 }
 
-// keyMain stores the OpenRouter API key in the Keychain (axprobe/app/openrouter),
-// read from stdin so it never lands in argv or shell history.
+// keyMain stores a named app key in the Keychain (axprobe/app/<name>), read from
+// stdin so it never lands in argv or shell history. The name defaults to
+// "openrouter" (the LLM key) but is parameterized for future keys axprobe needs.
 func keyMain() {
 	if len(os.Args) < 3 || os.Args[2] != "set" {
-		fmt.Fprintln(os.Stderr, "usage: axprobe key set        # then paste the key (or pipe: pbpaste | axprobe key set)")
+		fmt.Fprintln(os.Stderr, "usage: axprobe key set [name]   # name defaults to openrouter; then paste the key (or pipe)")
 		os.Exit(2)
 	}
-	fmt.Fprintln(os.Stderr, "Paste your OpenRouter API key and press Enter (input is not hidden):")
+	name := "openrouter"
+	if len(os.Args) >= 4 {
+		name = os.Args[3]
+	}
+	fmt.Fprintf(os.Stderr, "Paste the %q key and press Enter (input is not hidden):\n", name)
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	key := strings.TrimSpace(line)
 	if key == "" {
 		fmt.Fprintln(os.Stderr, "axprobe: no key provided")
 		os.Exit(1)
 	}
-	if err := secrets.SetApp("openrouter", []byte(key)); err != nil {
+	// Light shape check for known key types so a wrong paste fails loudly here, not
+	// at the first API call.
+	if name == "openrouter" && !strings.HasPrefix(key, "sk-or-") {
+		fmt.Fprintln(os.Stderr, "axprobe: that does not look like an OpenRouter key (expected sk-or-…); not stored")
+		os.Exit(1)
+	}
+	if err := secrets.SetApp(name, []byte(key)); err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("✓ stored OpenRouter key in the Keychain (axprobe/app/openrouter)")
+	fmt.Printf("✓ stored %q key in the Keychain (axprobe/app/%s)\n", name, name)
 }
 
 // reviewMain is the AX review agent: from a run report it drafts a paste-ready
