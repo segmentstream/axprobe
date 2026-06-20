@@ -410,6 +410,12 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir str
 		fmt.Printf("▸ driver:   scripted probes\n")
 	}
 
+	// Clear the scenario's own declared outputs in the workdir before the run, so
+	// it starts from scratch (a from-scratch authoring fixture). Host-side, guarded.
+	if m.Reset != nil && len(m.Reset.Paths) > 0 && workdir != "" {
+		clearWorkdirPaths(workdir, m.Reset.Paths)
+	}
+
 	b, teardown, err := bringUp(m, workdir)
 	if err != nil {
 		return err
@@ -420,6 +426,28 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir str
 		return runProbes(b, m) // Layer 0
 	}
 	return runDriver(b, m, client, reportPath, unattended, reset) // Layer 1
+}
+
+// clearWorkdirPaths removes the scenario's declared outputs, each resolved
+// relative to the workdir and refused if it would escape it — so reset clears
+// only what the scenario generates, never the user's broader repo.
+func clearWorkdirPaths(workdir string, paths []string) {
+	wabs, err := filepath.Abs(workdir)
+	if err != nil {
+		return
+	}
+	for _, p := range paths {
+		target := filepath.Clean(filepath.Join(wabs, p))
+		if target == wabs || !strings.HasPrefix(target, wabs+string(os.PathSeparator)) {
+			fmt.Printf("⚠ reset:    skipping %q (escapes --workdir)\n", p)
+			continue
+		}
+		if err := os.RemoveAll(target); err != nil {
+			fmt.Printf("  warning: reset path %q: %v\n", p, err)
+			continue
+		}
+		fmt.Printf("▸ reset:    cleared %s\n", p)
+	}
 }
 
 // bringUp creates a fresh box, starts it, and runs the manifest's setup. The

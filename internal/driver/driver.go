@@ -147,6 +147,17 @@ func (d *Driver) Run(ctx context.Context) (*Result, error) {
 
 	for step := 1; step <= maxSteps; step++ {
 		res.Steps = step
+		// Wander nudge: two-thirds through the budget with no observation, gate, or
+		// finish, the agent is likely flailing (poking around without progress).
+		// Prompt it to reflect and stop instead of burning the rest of the budget.
+		if step == maxSteps*2/3 && len(res.Observations) == 0 && len(res.Gates) == 0 {
+			messages = append(messages, llm.Message{
+				Role: "user",
+				Content: "You have taken many steps without recording a finding, gating, or finishing. " +
+					"If you are stuck or unsure how to proceed, call observe() to state exactly what is " +
+					"missing or unclear about the tool, then finish(reached=false). Do not keep exploring.",
+			})
+		}
 		msg, usage, err := d.llm.Chat(ctx, messages, toolDefs())
 		if err != nil {
 			res.Outcome = "error"
@@ -185,6 +196,15 @@ func (d *Driver) Run(ctx context.Context) (*Result, error) {
 
 	if res.Summary == "" {
 		res.Summary = fmt.Sprintf("Stopped after %d steps without finishing.", maxSteps)
+	}
+	// A run that exhausts the whole budget without recording anything is itself a
+	// finding — make sure the report carries a signal instead of zero observations.
+	if len(res.Observations) == 0 {
+		res.Observations = append(res.Observations, Observation{
+			Category: "missing_guidance",
+			Note: fmt.Sprintf("Ran the full %d-step budget without reaching the goal, gating, or recording a finding — "+
+				"the tool gave no clear path forward.", maxSteps),
+		})
 	}
 	res.finalize()
 	return res, nil
