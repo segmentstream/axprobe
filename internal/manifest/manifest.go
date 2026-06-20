@@ -49,12 +49,11 @@ type Manifest struct {
 }
 
 // Reset declares how to clear a fixture's persistent state before a run. Secrets
-// purges this scenario's cached credentials (so an auth fixture runs cold instead
-// of restoring a token); Paths clears the CONTENTS of box directories (keeping the
-// dirs) — e.g. a mounted/persistent project folder where `init` ran.
+// purges this scenario's cached credentials so an auth fixture runs cold instead
+// of restoring a token. (In-box files reset for free via the disposable box; a
+// mounted live workdir is the user's real repo and is never wiped.)
 type Reset struct {
-	Secrets bool     `yaml:"secrets,omitempty"`
-	Paths   []string `yaml:"paths,omitempty"`
+	Secrets bool `yaml:"secrets,omitempty"`
 }
 
 // Expect is a scenario's AX assertions. Pointers/zero distinguish "not asserted".

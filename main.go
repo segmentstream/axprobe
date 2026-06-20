@@ -34,9 +34,10 @@ import (
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  axprobe run [--model <id>] [--report <path>] [<manifest.yaml> | <scenario-name>]")
+	fmt.Fprintln(os.Stderr, "  axprobe run [--model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
 	fmt.Fprintln(os.Stderr, "      with no argument, runs every .axprobe/*.yaml in the current directory")
-	fmt.Fprintln(os.Stderr, "  axprobe explore --model <id> [--name <name>] \"<intent>\"")
+	fmt.Fprintln(os.Stderr, "      --workdir mounts a persistent project (live journey); --reset starts cold")
+	fmt.Fprintln(os.Stderr, "  axprobe explore --model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
 	fmt.Fprintln(os.Stderr, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
 	fmt.Fprintln(os.Stderr, "  axprobe probe [--image <img>] <command> [<command>...]")
 	fmt.Fprintln(os.Stderr, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
@@ -207,7 +208,7 @@ func probeCmd(commands []string, image string) error {
 		m = &manifest.Manifest{SchemaVersion: manifest.SupportedSchemaVersion, Name: "probe", Box: cfg.Box}
 	}
 
-	b, teardown, err := bringUp(m)
+	b, teardown, err := bringUp(m, "")
 	if err != nil {
 		return err
 	}
@@ -229,6 +230,8 @@ func runMain() {
 	model := fs.String("model", "", "OpenRouter model id (e.g. moonshotai/kimi-k2.6). If set, use the LLM driver instead of scripted probes.")
 	reportPath := fs.String("report", "", "Path to write the JSON AX report (default <scenario>.report.json for LLM runs).")
 	unattended := fs.Bool("unattended", false, "No interactive gates: satisfy oauth from a cached/provisioned token or end stopped_at_gate (for CI).")
+	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = disposable.")
+	reset := fs.Bool("reset", false, "Start cold: purge this scenario's cached credentials before the run (does not touch --workdir).")
 	pos := parsePositionals(fs, os.Args[2:])
 
 	arg := ""
@@ -249,7 +252,7 @@ func runMain() {
 		if len(manifests) > 1 {
 			rp = ""
 		}
-		if err := cmdRun(mp, *model, rp, *unattended); err != nil {
+		if err := cmdRun(mp, *model, rp, *unattended, *workdir, *reset); err != nil {
 			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 			failed = true
 		}
@@ -263,12 +266,13 @@ func exploreMain() {
 	fs := flag.NewFlagSet("explore", flag.ExitOnError)
 	model := fs.String("model", "", "OpenRouter model id (required).")
 	name := fs.String("name", "", "Scenario name → .axprobe/<name>.yaml (default derived from intent).")
+	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped.")
 	pos := parsePositionals(fs, os.Args[2:])
 	if len(pos) < 1 {
 		usage()
 	}
 	intent := strings.Join(pos, " ")
-	if err := exploreCmd(intent, *model, *name); err != nil {
+	if err := exploreCmd(intent, *model, *name, *workdir); err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 		os.Exit(1)
 	}
@@ -332,7 +336,7 @@ func filterOut(items []string, drop string) []string {
 	return out
 }
 
-func cmdRun(manifestPath, model, reportPath string, unattended bool) error {
+func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir string, reset bool) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
 		return err
@@ -358,7 +362,7 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool) error {
 		fmt.Printf("▸ driver:   scripted probes\n")
 	}
 
-	b, teardown, err := bringUp(m)
+	b, teardown, err := bringUp(m, workdir)
 	if err != nil {
 		return err
 	}
@@ -367,14 +371,14 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool) error {
 	if client == nil {
 		return runProbes(b, m) // Layer 0
 	}
-	return runDriver(b, m, client, reportPath, unattended) // Layer 1
+	return runDriver(b, m, client, reportPath, unattended, reset) // Layer 1
 }
 
 // bringUp creates a fresh box, starts it, and runs the manifest's setup. The
 // returned teardown must be deferred by the caller. extraPorts are published in
 // addition to those declared by loopback oauth credentials — explore uses this
 // to reserve a callback port for an oauth login it may only discover mid-run.
-func bringUp(m *manifest.Manifest, extraPorts ...int) (box.Box, func(), error) {
+func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, func(), error) {
 	// Publish callback ports declared by loopback oauth credentials so the
 	// browser redirect on the host reaches the login server inside the box.
 	var ports []int
@@ -385,6 +389,7 @@ func bringUp(m *manifest.Manifest, extraPorts ...int) (box.Box, func(), error) {
 	}
 	ports = append(ports, extraPorts...)
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
+	b.Workdir = workdir // live journey: mount the real project; "" = disposable
 	fmt.Printf("▸ box up:   %s\n", m.Box.Image)
 	if err := b.Up(); err != nil {
 		return nil, nil, err
@@ -414,7 +419,7 @@ func bringUp(m *manifest.Manifest, extraPorts ...int) (box.Box, func(), error) {
 
 // exploreCmd drives a plain-language intent once, discovering credentials
 // interactively, and synthesizes a scenario manifest under .axprobe/.
-func exploreCmd(intent, model, name string) error {
+func exploreCmd(intent, model, name, workdir string) error {
 	if model == "" {
 		return fmt.Errorf("explore requires --model")
 	}
@@ -447,7 +452,7 @@ func exploreCmd(intent, model, name string) error {
 
 	// Reserve the oauth callback port up front: explore may discover a loopback
 	// login mid-run, and the port must already be published to forward the redirect.
-	b, teardown, err := bringUp(m, explore.DefaultOAuthPort)
+	b, teardown, err := bringUp(m, workdir, explore.DefaultOAuthPort)
 	if err != nil {
 		return err
 	}
@@ -538,9 +543,9 @@ func emitReport(name string, res *driver.Result, reportPath string) report.Repor
 
 // runDriver is the Layer 1 LLM driver. It collects the approved metrics and
 // emits both a human summary and a JSON report artifact.
-func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended bool) error {
+func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended, reset bool) error {
 	store := secrets.New(m.Name)
-	applyReset(m, b, store) // clear cross-run state so the fixture starts from a known baseline
+	applyReset(m, store, reset) // start cold if the fixture declares it or --reset was passed
 	br := broker.New(m, b, store, unattended, os.Stdin, os.Stdout)
 	br.Prime() // restore any cached oauth tokens before driving (a no-op after a secrets reset)
 
@@ -566,27 +571,19 @@ func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath s
 	return nil
 }
 
-// applyReset clears a fixture's cross-run state before the run so a re-run starts
-// from a known baseline. The disposable box already resets in-box files; this
-// covers what survives: cached secrets (Keychain) and the contents of declared
-// persistent paths.
-func applyReset(m *manifest.Manifest, b box.Box, store *secrets.Store) {
-	if m.Reset == nil {
+// applyReset purges this scenario's cached credentials so the run starts cold —
+// either because the fixture declares it (auth-test fixture) or because the
+// operator passed --reset (a deliberate "start over"). It never touches a mounted
+// workdir: that is the user's real repo. In-box files reset for free via the box.
+func applyReset(m *manifest.Manifest, store *secrets.Store, force bool) {
+	if !force && (m.Reset == nil || !m.Reset.Secrets) {
 		return
 	}
-	if m.Reset.Secrets {
-		for _, c := range m.Credentials {
-			store.Delete(c.Name)
-			store.Delete(c.Name + ".token") // oauth token cache key
-		}
-		fmt.Println("▸ reset:    purged cached secrets (cold auth)")
+	for _, c := range m.Credentials {
+		store.Delete(c.Name)
+		store.Delete(c.Name + ".token") // oauth token cache key
 	}
-	for _, p := range m.Reset.Paths {
-		// Clear the CONTENTS, keep the directory itself.
-		if _, err := b.Exec(fmt.Sprintf("find %q -mindepth 1 -delete 2>/dev/null || true", p)); err == nil {
-			fmt.Printf("▸ reset:    cleared contents of %s\n", p)
-		}
-	}
+	fmt.Println("▸ reset:    purged cached secrets (cold)")
 }
 
 // printResult renders one command's output, indented, with its exit code.

@@ -8,15 +8,24 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 )
+
+// containerWorkdir is where a mounted host workdir lands inside the box, and the
+// working directory commands run from when one is mounted.
+const containerWorkdir = "/workspace"
 
 // LocalDockerBox runs commands inside a throwaway container on the local Docker
 // daemon. The container is started detached with a long-lived no-op command so
 // the harness can `docker exec` into it repeatedly, then force-removed on Down.
 type LocalDockerBox struct {
-	Image       string
-	Ports       []int // loopback ports to publish (host 127.0.0.1:p -> box p)
+	Image string
+	Ports []int // loopback ports to publish (host 127.0.0.1:p -> box p)
+	// Workdir, if set, is a host directory bind-mounted at /workspace and used as
+	// the working directory — the live journey's persistent, inspectable project.
+	// It is never wiped by the harness; it is the user's real repo.
+	Workdir     string
 	containerID string
 }
 
@@ -33,6 +42,16 @@ func (b *LocalDockerBox) Up() error {
 	args := []string{"run", "-d"}
 	for _, p := range b.Ports {
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:%d", p, p))
+	}
+	if b.Workdir != "" {
+		abs, err := filepath.Abs(b.Workdir)
+		if err != nil {
+			return fmt.Errorf("workdir: %w", err)
+		}
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			return fmt.Errorf("workdir: %w", err)
+		}
+		args = append(args, "-v", abs+":"+containerWorkdir, "-w", containerWorkdir)
 	}
 	args = append(args, b.Image, "sleep", "infinity")
 
@@ -85,6 +104,16 @@ func (b *LocalDockerBox) startLoopbackRelays() error {
 	return nil
 }
 
+// execArgs builds the `docker exec` argv, running from the mounted workdir when
+// one is set so the tool generates into the host project.
+func (b *LocalDockerBox) execArgs(cmd string) []string {
+	a := []string{"exec"}
+	if b.Workdir != "" {
+		a = append(a, "-w", containerWorkdir)
+	}
+	return append(a, b.containerID, "sh", "-lc", cmd)
+}
+
 // Exec runs `sh -lc <cmd>` inside the container. A non-zero exit is reported in
 // the ExecResult, not as an error.
 func (b *LocalDockerBox) Exec(cmd string) (ExecResult, error) {
@@ -92,7 +121,7 @@ func (b *LocalDockerBox) Exec(cmd string) (ExecResult, error) {
 		return ExecResult{}, fmt.Errorf("box is not up")
 	}
 
-	c := exec.Command("docker", "exec", b.containerID, "sh", "-lc", cmd)
+	c := exec.Command("docker", b.execArgs(cmd)...)
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
@@ -117,7 +146,7 @@ func (b *LocalDockerBox) ExecStream(cmd string, out io.Writer) (ExecResult, erro
 	if b.containerID == "" {
 		return ExecResult{}, fmt.Errorf("box is not up")
 	}
-	c := exec.Command("docker", "exec", b.containerID, "sh", "-lc", cmd)
+	c := exec.Command("docker", b.execArgs(cmd)...)
 	c.Stdout = out
 	c.Stderr = out
 

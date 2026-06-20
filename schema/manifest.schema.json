@@ -68,10 +68,9 @@
     "reset": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Return the fixture to a clean baseline BEFORE the run, so a re-run starts from scratch. The box is disposable (in-box files reset for free); reset covers cross-run state.",
+      "description": "Return the fixture to a clean baseline BEFORE the run. The box is disposable (in-box files reset for free) and a mounted live workdir is never wiped; reset covers the cross-run credential cache.",
       "properties": {
-        "secrets": { "type": "boolean", "description": "Purge this scenario's cached credentials (Keychain) so an auth fixture runs cold instead of restoring a token." },
-        "paths": { "type": "array", "items": { "type": "string" }, "description": "Clear the CONTENTS of these box directories (keep the dirs) — e.g. a mounted/persistent project folder where init ran." }
+        "secrets": { "type": "boolean", "description": "Purge this scenario's cached credentials (Keychain) so an auth fixture runs cold instead of restoring a token." }
       }
     },
     "credentials": {
