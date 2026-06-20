@@ -18,6 +18,7 @@
     "duration_seconds",
     "observations",
     "false_errors",
+    "transcript",
     "tokens",
     "summary"
   ],
@@ -98,6 +99,20 @@
           "command": { "type": "string", "description": "The command that exited non-zero." },
           "exit_code": { "type": "integer", "description": "The non-zero exit code." },
           "reason": { "type": "string", "description": "Why it was flagged as a false error." }
+        }
+      }
+    },
+    "transcript": {
+      "type": "array",
+      "description": "The commands the agent ran and a one-line summary of each result — the ACTUAL evidence a finding is built from.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code", "result"],
+        "properties": {
+          "command": { "type": "string", "description": "The command run." },
+          "exit_code": { "type": "integer", "description": "Its exit code." },
+          "result": { "type": "string", "description": "One-line summary of the command's output." }
         }
       }
     },

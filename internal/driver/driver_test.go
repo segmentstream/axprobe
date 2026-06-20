@@ -23,3 +23,19 @@ func TestDeclaredLoginMatchesFullPath(t *testing.T) {
 		}
 	}
 }
+
+func TestRepeatedNoProgress(t *testing.T) {
+	ts := []Step{
+		{Command: "tool init --json", Result: "ready: false"},
+		{Command: "tool configure", Result: "valid"},
+		{Command: "tool init --json", Result: "ready: false"}, // same cmd+result as #1
+	}
+	// init --json with the SAME result has occurred twice; a third makes 3 → stuck.
+	if n := repeatedNoProgress(ts, "tool   init   --json", "ready: false"); n != 2 {
+		t.Errorf("repeatedNoProgress = %d, want 2 (normalized match, same result)", n)
+	}
+	// A verify command whose result CHANGED is progress, not a loop.
+	if n := repeatedNoProgress(ts, "tool init --json", "ready: true"); n != 0 {
+		t.Errorf("changed result should not count as repeat; got %d", n)
+	}
+}

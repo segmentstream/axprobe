@@ -77,6 +77,14 @@ type FalseError struct {
 	Reason   string `json:"reason"`
 }
 
+// Step is one command in the run transcript — the ACTUAL evidence a finding is
+// built from (command → result), recorded verbatim.
+type Step struct {
+	Command  string `json:"command"`
+	ExitCode int    `json:"exit_code"`
+	Result   string `json:"result"` // one-line summary of the command's output
+}
+
 // Result holds the approved v0 telemetry for a driven run.
 type Result struct {
 	Model         string
@@ -89,6 +97,7 @@ type Result struct {
 	Steps         int
 	CommandsRun   int
 	Commands      []string // commands the agent ran (tool-vocabulary source for the goal lint)
+	Transcript    []Step   // command → result, the ACTUAL evidence for findings
 	DurationSec   float64
 	Observations  []Observation
 	FalseErrors   []FalseError
@@ -239,6 +248,8 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		}
 		res.CommandsRun++
 		res.Commands = append(res.Commands, cmd)
+		line := resultLine(r)
+		res.Transcript = append(res.Transcript, Step{Command: cmd, ExitCode: r.ExitCode, Result: line})
 		printResult(r)
 		if looksLikeFalseError(r) {
 			res.FalseErrors = append(res.FalseErrors, FalseError{
@@ -246,6 +257,20 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 				ExitCode: r.ExitCode,
 				Reason:   "non-zero exit but output describes normal state/next action",
 			})
+		}
+
+		// Stuck guard: the SAME command returning the SAME result three times means
+		// the agent is looping with no path forward (re-running a verify command
+		// whose result changes is fine — that is progress). Stop and record a
+		// missing-guidance finding instead of burning the step budget.
+		if repeatedNoProgress(res.Transcript, cmd, line) >= 3 {
+			res.Observations = append(res.Observations, Observation{
+				Category: "missing_guidance",
+				Note:     fmt.Sprintf("Ran %q repeatedly with identical output and no way forward — the tool gave no next-action to get unstuck.", oneline(cmd)),
+			})
+			res.Summary = "Stuck: repeated a command with identical output and no path forward."
+			fmt.Println("⨯ stuck:   command repeated with no progress — stopping")
+			return "Stopping: repeating this command yields the same result and makes no progress.", true
 		}
 		return fmt.Sprintf("exit=%d\nstdout:\n%s\nstderr:\n%s",
 			r.ExitCode, truncate(r.Stdout), truncate(r.Stderr)), false
@@ -280,6 +305,34 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		return fmt.Sprintf("unknown tool %q", tc.Function.Name), false
 	}
 }
+
+// resultLine summarizes a command's output as its first non-empty line, for the
+// transcript and the stuck-guard's progress comparison.
+func resultLine(r box.ExecResult) string {
+	for _, stream := range []string{r.Stdout, r.Stderr} {
+		for _, ln := range strings.Split(stream, "\n") {
+			if t := strings.TrimSpace(ln); t != "" {
+				return oneline(t)
+			}
+		}
+	}
+	return ""
+}
+
+// repeatedNoProgress counts transcript steps with the same (normalized) command
+// AND the same result — identical re-runs that made no progress.
+func repeatedNoProgress(ts []Step, cmd, result string) int {
+	want := normCommand(cmd)
+	n := 0
+	for _, s := range ts {
+		if normCommand(s.Command) == want && s.Result == result {
+			n++
+		}
+	}
+	return n
+}
+
+func normCommand(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 func printResult(r box.ExecResult) {
 	for _, stream := range []string{r.Stdout, r.Stderr} {

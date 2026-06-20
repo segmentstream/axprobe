@@ -42,6 +42,7 @@ type Report struct {
 	DurationSeconds    float64              `json:"duration_seconds"`
 	Observations       []driver.Observation `json:"observations"`
 	FalseErrors        []driver.FalseError  `json:"false_errors"`
+	Transcript         []driver.Step        `json:"transcript"`
 	Tokens             Tokens               `json:"tokens"`
 	Summary            string               `json:"summary"`
 }
@@ -61,6 +62,7 @@ func From(scenario string, r *driver.Result) Report {
 		DurationSeconds:    round1(r.DurationSec),
 		Observations:       nonNilObs(r.Observations),
 		FalseErrors:        nonNilFE(r.FalseErrors),
+		Transcript:         nonNilSteps(r.Transcript),
 		Tokens: Tokens{
 			Prompt:     r.Tokens.PromptTokens,
 			Completion: r.Tokens.CompletionTokens,
@@ -177,6 +179,13 @@ func nonNilObs(s []driver.Observation) []driver.Observation {
 func nonNilFE(s []driver.FalseError) []driver.FalseError {
 	if s == nil {
 		return []driver.FalseError{}
+	}
+	return s
+}
+
+func nonNilSteps(s []driver.Step) []driver.Step {
+	if s == nil {
+		return []driver.Step{}
 	}
 	return s
 }
