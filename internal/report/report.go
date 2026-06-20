@@ -120,9 +120,9 @@ func (r Report) PrintHuman(w io.Writer) {
 	for _, fe := range r.FalseErrors {
 		fmt.Fprintf(w, "    exit %d: %s\n", fe.ExitCode, fe.Command)
 	}
-	fmt.Fprintf(w, "observations:        %d\n", len(r.Observations))
+	fmt.Fprintf(w, "observations:        %d%s\n", len(r.Observations), categoryTally(r.Observations))
 	for i, o := range r.Observations {
-		fmt.Fprintf(w, "    %d. %s\n", i+1, o.Note)
+		fmt.Fprintf(w, "    %d. [%s] %s\n", i+1, o.Category, o.Note)
 		if s := strings.TrimSpace(o.Suggestion); s != "" {
 			fmt.Fprintf(w, "       ↳ fix: %s\n", s)
 		}
@@ -136,6 +136,28 @@ func (r Report) PrintHuman(w io.Writer) {
 	if s := strings.TrimSpace(r.Summary); s != "" {
 		fmt.Fprintf(w, "summary:             %s\n", s)
 	}
+}
+
+// categoryTally renders a compact per-category breakdown like
+// "  (missing_guidance 1, friction 2)" — the actionable feedback at a glance.
+func categoryTally(obs []driver.Observation) string {
+	if len(obs) == 0 {
+		return ""
+	}
+	counts := map[string]int{}
+	for _, o := range obs {
+		counts[o.Category]++
+	}
+	var parts []string
+	for _, cat := range driver.ObservationCategories {
+		if n := counts[cat]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", cat, n))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  (" + strings.Join(parts, ", ") + ")"
 }
 
 func nonNil(s []string) []string {

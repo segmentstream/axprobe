@@ -38,11 +38,34 @@ const (
 	onelinePreviewer = 200
 )
 
-// Observation is one qualitative AX finding. No scores, no fixed taxonomy — we
-// agreed metrics are defined later, with a human, not invented by the harness.
+// Observation is one qualitative AX finding, tagged with a product-owner-defined
+// category so a run becomes actionable app-improvement feedback.
 type Observation struct {
+	Category   string `json:"category"`
 	Note       string `json:"note"`
 	Suggestion string `json:"suggestion,omitempty"`
+}
+
+// ObservationCategories is the AX feedback taxonomy (defined with the product
+// owner). Order is the order shown in the report tally.
+var ObservationCategories = []string{
+	"missing_guidance", // the tool didn't say what to do; the agent had to guess
+	"confusion",        // confusing or false error, misleading output
+	"extra_steps",      // it took more steps than it should
+	"friction",         // it worked but was inconvenient/awkward
+	"unclear_interface", // confusing command names, flags, or output structure
+}
+
+// normalizeCategory maps a model-supplied category onto the taxonomy, defaulting
+// to "friction" (the generic "this was worse than it should be") when unknown.
+func normalizeCategory(c string) string {
+	c = strings.ToLower(strings.TrimSpace(c))
+	for _, k := range ObservationCategories {
+		if c == k {
+			return c
+		}
+	}
+	return "friction"
 }
 
 // FalseError is a non-zero exit that does not look like a real failure — the tool
@@ -225,9 +248,9 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 			r.ExitCode, truncate(r.Stdout), truncate(r.Stderr)), false
 
 	case "observe":
-		o := Observation{Note: str("note"), Suggestion: str("suggestion")}
+		o := Observation{Category: normalizeCategory(str("category")), Note: str("note"), Suggestion: str("suggestion")}
 		res.Observations = append(res.Observations, o)
-		fmt.Printf("⚑ observe: %s\n", oneline(o.Note))
+		fmt.Printf("⚑ observe [%s]: %s\n", o.Category, oneline(o.Note))
 		return "recorded", false
 
 	case "gate":

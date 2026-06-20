@@ -22,7 +22,9 @@ cleverness.
 How to work:
 - Use bash() to make progress and to read the tool's own output and state.
 - Prefer reading what the tool tells you over guessing.
-- When something makes progress harder or is confusing, call observe() in plain language.
+- When something makes progress harder or is confusing, call observe() in plain
+  language and tag it with a category (missing_guidance, confusion, extra_steps,
+  friction, unclear_interface).
 - Watch exit codes: if a command exits NON-ZERO but its output still describes
   normal state or a next action (not a real failure), that is a confusing "false
   error" — call observe() and say so.
@@ -60,12 +62,21 @@ func toolDefs() []llm.Tool {
 			map[string]any{"command": strProp("The shell command to run.")},
 			"command"),
 
-		fn("observe", "Record an AX finding in plain language: anything that made progress harder, was ambiguous, produced a confusing or false error, or required a human. Do not assign scores or invent metrics.",
+		fn("observe", "Record an AX finding about the TOOL's experience that a product team should fix. Pick the category that fits best.",
 			map[string]any{
+				"category": map[string]any{
+					"type": "string",
+					"enum": []string{"missing_guidance", "confusion", "extra_steps", "friction", "unclear_interface"},
+					"description": "missing_guidance: the tool didn't tell you what to do / you had to guess. " +
+						"confusion: a confusing or false error, or misleading output. " +
+						"extra_steps: it took more steps than it should have. " +
+						"friction: it worked but was inconvenient or awkward. " +
+						"unclear_interface: confusing command names, flags, or output structure.",
+				},
 				"note":       strProp("What happened and why it is a finding."),
 				"suggestion": strProp("Optional: how the tool could make this simpler."),
 			},
-			"note"),
+			"category", "note"),
 
 		fn("gate", "Stop the run because a human must provide a secret/credential or make a real decision before progress can continue.",
 			map[string]any{

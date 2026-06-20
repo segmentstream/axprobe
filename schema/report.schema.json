@@ -75,8 +75,13 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["note"],
+        "required": ["category", "note"],
         "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["missing_guidance", "confusion", "extra_steps", "friction", "unclear_interface"],
+            "description": "AX feedback category. missing_guidance: tool didn't say what to do. confusion: confusing/false error or misleading output. extra_steps: more steps than needed. friction: worked but inconvenient. unclear_interface: confusing commands/flags/output."
+          },
           "note": { "type": "string", "description": "Plain-language description of the finding." },
           "suggestion": { "type": "string", "description": "Optional simplification advice." }
         }
