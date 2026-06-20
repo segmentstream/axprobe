@@ -129,12 +129,15 @@ A finding is a **GitHub issue in the tool's repo, in English**, framed as
 
 ## Filing is human-gated
 
-Drafting a finding is automatic; **filing** it is an external, public action on a
-shared system, so it stays in the "ask" bucket (decide-vs-ask category 2). The
-operator drafts in the format above (Observed transcript auto-filled from the
-report) and the product owner approves / edits / skips with one word. The harness
-never files issues itself — it emits a paste-ready draft; a human publishes it.
-Relax to auto-filing only low-risk findings once findings prove high-signal.
+Drafting a finding is automatic — `axprobe review [--model <id>] <report.json>`
+renders a paste-ready draft (Observed transcript verbatim from the report; with
+--model an LLM reviewer guided by this skill writes the why / ideal / request).
+**Filing** it is an external, public action on a shared system, so it stays in the
+"ask" bucket (decide-vs-ask category 2): show the product owner the FULL rendered
+draft and get approval BEFORE filing — not just the intent or a summary. The owner
+approves / edits / skips with one word. The harness never files issues itself; a
+human publishes it. Relax to auto-filing only low-risk findings once findings
+prove high-signal.
 
 ## Never coach the agent
 

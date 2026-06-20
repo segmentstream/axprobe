@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/segmentstream/axprobe/internal/llm"
 	"github.com/segmentstream/axprobe/internal/manifest"
 	"github.com/segmentstream/axprobe/internal/report"
+	"github.com/segmentstream/axprobe/internal/review"
 	"github.com/segmentstream/axprobe/internal/secrets"
 	"github.com/segmentstream/axprobe/internal/skill"
 )
@@ -42,6 +44,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
 	fmt.Fprintln(os.Stderr, "  axprobe skill [--install]")
 	fmt.Fprintln(os.Stderr, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
+	fmt.Fprintln(os.Stderr, "  axprobe review [--model <id>] <report.json>")
+	fmt.Fprintln(os.Stderr, "      AX-review a run report into a paste-ready finding draft (does not file)")
 	os.Exit(2)
 }
 
@@ -64,9 +68,50 @@ func main() {
 		lintMain()
 	case "skill":
 		skillMain()
+	case "review":
+		reviewMain()
 	default:
 		usage()
 	}
+}
+
+// reviewMain is the AX review agent: from a run report it drafts a paste-ready
+// finding. With --model an LLM reviewer (guided by the skill) writes the judgment
+// parts; without it, a mechanical scaffold. The Observed transcript is always
+// verbatim from the report. It prints the draft — it never files (human-gated).
+func reviewMain() {
+	fs := flag.NewFlagSet("review", flag.ExitOnError)
+	model := fs.String("model", "", "OpenRouter model id: review with judgment (ideal flow + request). Without it, scaffold a draft.")
+	pos := parsePositionals(fs, os.Args[2:])
+	if len(pos) < 1 {
+		usage()
+	}
+	data, err := os.ReadFile(pos[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	var rep report.Report
+	if err := json.Unmarshal(data, &rep); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: parse report %s: %v\n", pos[0], err)
+		os.Exit(1)
+	}
+
+	if *model == "" {
+		fmt.Print(report.Draft(rep))
+		return
+	}
+	client, err := llm.New(*model)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	draft, err := review.WithModel(context.Background(), client, rep)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(draft)
 }
 
 // skillMain prints the bundled axprobe-author skill (the authoring/review rubric),

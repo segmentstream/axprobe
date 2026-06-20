@@ -162,6 +162,104 @@ func categoryTally(obs []driver.Observation) string {
 	return "  (" + strings.Join(parts, ", ") + ")"
 }
 
+// maxDraftSteps caps the transcript shown in a draft to the endgame, where the
+// wall usually is; earlier steps are summarized as omitted.
+const maxDraftSteps = 15
+
+// ObservedBlock renders the run transcript as the Observed evidence (a fenced
+// block of `$ command → result`), trimmed to the endgame. This is the real,
+// verbatim evidence — never model-generated.
+func ObservedBlock(r Report) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Driving `%s` with %s (outcome: %s, HIC: %d, false_errors: %d):\n\n```\n",
+		r.Scenario, r.Model, r.Outcome, r.HumanInterventions, len(r.FalseErrors))
+	steps := r.Transcript
+	if len(steps) > maxDraftSteps {
+		fmt.Fprintf(&b, "… (%d earlier steps omitted) …\n", len(steps)-maxDraftSteps)
+		steps = steps[len(steps)-maxDraftSteps:]
+	}
+	for _, s := range steps {
+		fmt.Fprintf(&b, "$ %s\n", s.Command)
+		if s.Result != "" {
+			note := ""
+			if s.ExitCode != 0 {
+				note = fmt.Sprintf("  (exit %d)", s.ExitCode)
+			}
+			fmt.Fprintf(&b, "→ %s%s\n", s.Result, note)
+		}
+	}
+	b.WriteString("```\n")
+	return b.String()
+}
+
+// RenderFinding assembles a finding in the agreed format. Observed comes from the
+// report (real evidence); title/summary/why/ideal/request are the judgment —
+// scaffolded by Draft, or written by the review agent.
+func RenderFinding(r Report, title, summary string, why []string, ideal string, request []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Title: Agentic UX: %s\n\n", title)
+	fmt.Fprintf(&b, "## Summary\n%s\n\n", summary)
+	fmt.Fprintf(&b, "## Observed\n%s\n", ObservedBlock(r))
+
+	b.WriteString("\n## Why it matters (Agentic Experience)\n")
+	if len(why) == 0 {
+		b.WriteString("_(state which principle(s) this breaks)_\n")
+	} else {
+		for _, w := range why {
+			fmt.Fprintf(&b, "- %s\n", w)
+		}
+	}
+
+	b.WriteString("\n## Proposed flow (ideal)\n")
+	if strings.TrimSpace(ideal) == "" {
+		b.WriteString("_TODO (operator): the ideal transcript — what the interaction should look like._\n")
+	} else {
+		b.WriteString(strings.TrimRight(ideal, "\n") + "\n")
+	}
+
+	b.WriteString("\n## Request\n")
+	if len(request) == 0 {
+		b.WriteString("_TODO (operator): concrete, numbered changes._\n")
+	} else {
+		for i, rq := range request {
+			fmt.Fprintf(&b, "%d. %s\n", i+1, rq)
+		}
+	}
+
+	fmt.Fprintf(&b, "\n## Context\nFound via axprobe driving `%s` in a disposable sandbox.\n", r.Scenario)
+	return b.String()
+}
+
+// Draft is the no-LLM finding: real Observed + observations as why-it-matters,
+// with ideal flow and request scaffolded for the operator to complete.
+func Draft(r Report) string {
+	why := make([]string, 0, len(r.Observations))
+	for _, o := range r.Observations {
+		why = append(why, fmt.Sprintf("**%s** — %s", o.Category, o.Note))
+	}
+	summary := r.Summary
+	if strings.TrimSpace(summary) == "" {
+		summary = "The agent could not complete the goal — see the transcript below."
+	}
+	return RenderFinding(r, draftTitle(r), summary, why, "", nil)
+}
+
+func draftTitle(r Report) string {
+	src := ""
+	if len(r.Observations) > 0 {
+		src = r.Observations[0].Note
+	} else if strings.TrimSpace(r.Summary) != "" {
+		src = r.Summary
+	} else {
+		src = "the agent got stuck driving " + r.Scenario
+	}
+	src = strings.Join(strings.Fields(src), " ")
+	if len(src) > 80 {
+		src = strings.TrimSpace(src[:80]) + "…"
+	}
+	return src
+}
+
 func nonNil(s []string) []string {
 	if s == nil {
 		return []string{}
