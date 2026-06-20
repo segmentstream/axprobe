@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+
+	"github.com/segmentstream/axprobe/internal/events"
 )
 
 var urlRe = regexp.MustCompile(`https?://[^\s"']+`)
@@ -32,7 +34,9 @@ func (o *opener) Write(p []byte) (int, error) {
 		// end), so we never open a partial URL split across stream chunks.
 		if loc := urlRe.FindIndex(o.buf); loc != nil && loc[1] < len(o.buf) {
 			o.opened = true
-			open(string(o.buf[loc[0]:loc[1]]), o.w)
+			url := string(o.buf[loc[0]:loc[1]])
+			events.Emit("login_url", "url", url)
+			open(url, o.w)
 			o.buf = nil
 		}
 		if len(o.buf) > 16384 {

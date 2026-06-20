@@ -22,6 +22,7 @@ import (
 	"github.com/segmentstream/axprobe/internal/box"
 	"github.com/segmentstream/axprobe/internal/broker"
 	"github.com/segmentstream/axprobe/internal/dotenv"
+	"github.com/segmentstream/axprobe/internal/events"
 	"github.com/segmentstream/axprobe/internal/driver"
 	"github.com/segmentstream/axprobe/internal/explore"
 	"github.com/segmentstream/axprobe/internal/lint"
@@ -280,7 +281,9 @@ func runMain() {
 	unattended := fs.Bool("unattended", false, "No interactive gates: satisfy oauth from a cached/provisioned token or end stopped_at_gate (for CI).")
 	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = disposable.")
 	reset := fs.Bool("reset", false, "Start cold: purge this scenario's cached credentials before the run (does not touch --workdir).")
+	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq` (login_url, bash, gate, observe, outcome…).")
 	pos := parsePositionals(fs, os.Args[2:])
+	openEvents(*eventsPath)
 
 	arg := ""
 	if len(pos) >= 1 {
@@ -315,7 +318,9 @@ func exploreMain() {
 	model := fs.String("model", "", "OpenRouter model id (required).")
 	name := fs.String("name", "", "Scenario name → .axprobe/<name>.yaml (default derived from intent).")
 	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped.")
+	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq`.")
 	pos := parsePositionals(fs, os.Args[2:])
+	openEvents(*eventsPath)
 	if len(pos) < 1 {
 		usage()
 	}
@@ -663,6 +668,20 @@ func applyReset(m *manifest.Manifest, store *secrets.Store, force bool) {
 		store.Delete(c.Name + ".token") // oauth token cache key
 	}
 	fmt.Println("▸ reset:    purged cached secrets (cold)")
+}
+
+// openEvents directs the JSONL event stream to a file (for `tail -f | jq`
+// watching). The file stays open for the process lifetime; a run is one process.
+func openEvents(path string) {
+	if path == "" {
+		return
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  warning: --events %q: %v\n", path, err)
+		return
+	}
+	events.SetOutput(f)
 }
 
 // warnWorkdirSecrets warns loudly when a mounted workdir holds secret-looking

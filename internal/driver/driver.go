@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/segmentstream/axprobe/internal/box"
+	"github.com/segmentstream/axprobe/internal/events"
 	"github.com/segmentstream/axprobe/internal/llm"
 	"github.com/segmentstream/axprobe/internal/manifest"
 )
@@ -118,6 +119,7 @@ func (r *Result) finalize() {
 		r.Outcome = "stuck"
 		r.GoalReached = false
 	}
+	events.Emit("outcome", "outcome", r.Outcome, "goal_reached", r.GoalReached)
 }
 
 // Driver couples a box, a manifest goal, a model and a gatekeeper.
@@ -236,6 +238,7 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		if login, isLogin := declaredLogin(d.m, cmd); isLogin && !isHelpInvocation(cmd) && d.gate != nil {
 			fmt.Printf("▸ bash:    %s\n", cmd)
 			fmt.Println("   ↪ interactive login — handled by the harness")
+			events.Emit("login_intercept", "credential", login.Name)
 			res.Gates = append(res.Gates, "browser login: "+login.Name)
 			if msg, ok := d.gate.Resolve("a browser login is required for " + login.Name); ok {
 				fmt.Printf("✓ resumed: %s\n", oneline(msg))
@@ -270,6 +273,7 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		res.Commands = append(res.Commands, cmd)
 		line := resultLine(r)
 		res.Transcript = append(res.Transcript, Step{Command: cmd, ExitCode: r.ExitCode, Result: line})
+		events.Emit("bash", "cmd", cmd, "exit", r.ExitCode, "result", line)
 		printResult(r)
 		if looksLikeFalseError(r) {
 			res.FalseErrors = append(res.FalseErrors, FalseError{
@@ -299,12 +303,14 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		o := Observation{Category: normalizeCategory(str("category")), Note: str("note"), Suggestion: str("suggestion")}
 		res.Observations = append(res.Observations, o)
 		fmt.Printf("⚑ observe [%s]: %s\n", o.Category, oneline(o.Note))
+		events.Emit("observe", "category", o.Category, "note", oneline(o.Note))
 		return "recorded", false
 
 	case "gate":
 		needs := str("needs")
 		res.Gates = append(res.Gates, needs)
 		fmt.Printf("⏸ gate:    needs %s\n", oneline(needs))
+		events.Emit("gate", "needs", oneline(needs))
 		if d.gate != nil {
 			if msg, ok := d.gate.Resolve(needs); ok {
 				fmt.Printf("✓ resumed: %s\n", oneline(msg))
@@ -319,6 +325,7 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 		res.Reached = reached
 		res.Summary = str("summary")
 		fmt.Printf("■ finish:  reached=%v\n", reached)
+		events.Emit("finish", "reached", reached)
 		return "done", true
 
 	default:

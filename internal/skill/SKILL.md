@@ -68,6 +68,20 @@ Don't hand-write YAML. Give `explore` a user-level intent; it drives the tool in
 the sandbox and synthesizes a correct-by-construction manifest (plumbing
 separated, schema valid), then lints the goal. Review the draft before committing.
 
+## Watching a run
+
+Launch in the background with a JSONL event stream and tail it — reliable to parse,
+no grepping human output:
+
+```
+axprobe run <scenario> --workdir . --model <id> --events /tmp/run.jsonl >/tmp/run.log 2>&1 &
+tail -f /tmp/run.jsonl | jq -c .
+```
+
+Event types: `login_url` (the human must approve the browser login NOW), `gate`,
+`bash`, `observe`, `finish`, `outcome` (ends the run). The full human log and the
+`report.json` remain for detail. Act on `login_url` immediately; stop on `outcome`.
+
 ## Reviewing a run → product feedback
 
 The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
