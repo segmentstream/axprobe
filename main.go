@@ -27,6 +27,7 @@ import (
 	"github.com/segmentstream/axprobe/internal/manifest"
 	"github.com/segmentstream/axprobe/internal/report"
 	"github.com/segmentstream/axprobe/internal/secrets"
+	"github.com/segmentstream/axprobe/internal/skill"
 )
 
 func usage() {
@@ -39,6 +40,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
 	fmt.Fprintln(os.Stderr, "  axprobe lint [--strict] [<scenario-name>]")
 	fmt.Fprintln(os.Stderr, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
+	fmt.Fprintln(os.Stderr, "  axprobe skill [--install]")
+	fmt.Fprintln(os.Stderr, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
 	os.Exit(2)
 }
 
@@ -59,9 +62,34 @@ func main() {
 		probeMain()
 	case "lint":
 		lintMain()
+	case "skill":
+		skillMain()
 	default:
 		usage()
 	}
+}
+
+// skillMain prints the bundled axprobe-author skill (the authoring/review rubric),
+// or installs it as a Claude Code skill with --install.
+func skillMain() {
+	fs := flag.NewFlagSet("skill", flag.ExitOnError)
+	install := fs.Bool("install", false, "Write the skill to .claude/skills/<name>/SKILL.md instead of printing it.")
+	_ = fs.Parse(os.Args[2:])
+	if !*install {
+		fmt.Print(skill.Body)
+		return
+	}
+	dir := filepath.Join(".claude", "skills", skill.Name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	path := filepath.Join(dir, "SKILL.md")
+	if err := os.WriteFile(path, []byte(skill.Body), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("installed skill → %s\n", path)
 }
 
 // lintMain warns when a scenario goal leaks tool-interface detail (command names,
