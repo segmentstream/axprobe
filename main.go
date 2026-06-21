@@ -21,6 +21,7 @@ import (
 
 	"github.com/segmentstream/axprobe/internal/box"
 	"github.com/segmentstream/axprobe/internal/broker"
+	"github.com/segmentstream/axprobe/internal/config"
 	"github.com/segmentstream/axprobe/internal/dotenv"
 	"github.com/segmentstream/axprobe/internal/driver"
 	"github.com/segmentstream/axprobe/internal/events"
@@ -161,7 +162,7 @@ func keyMain() {
 // verbatim from the report. It prints the draft — it never files (human-gated).
 func reviewMain() {
 	fs := flag.NewFlagSet("review", flag.ExitOnError)
-	model := fs.String("model", "", "OpenRouter model id: review with judgment (ideal flow + request). Without it, scaffold a draft.")
+	model := fs.String("model", "", "Judge model id (else AXPROBE_REVIEW_MODEL, then review_model in ~/.axprobe/config.yaml). Prefer a stronger model than the driver. Unset → mechanical scaffold.")
 	pos := parsePositionals(fs, os.Args[2:])
 	if len(pos) < 1 {
 		usage()
@@ -177,11 +178,20 @@ func reviewMain() {
 		os.Exit(1)
 	}
 
-	if *model == "" {
+	// Resolve the judge model: --model > AXPROBE_REVIEW_MODEL > config.review_model.
+	// It does NOT fall back to the driver model: an unset judge means the
+	// mechanical scaffold, never "reuse the weak driver as judge".
+	reviewModel := config.ResolveReviewModel(*model)
+	if reviewModel == "" {
 		fmt.Print(report.Draft(rep))
 		return
 	}
-	client, err := llm.New(*model)
+	// The judge should be stronger than — and distinct from — the model under
+	// measurement. If they coincide, the instrument is grading itself; warn.
+	if rep.Model != "" && reviewModel == rep.Model {
+		fmt.Fprintf(os.Stderr, "axprobe: warning: review model %q is the same as the driver model that produced this report — the judge is the instrument. Prefer a stronger review model (--model, AXPROBE_REVIEW_MODEL, or review_model in ~/.axprobe/config.yaml).\n", reviewModel)
+	}
+	client, err := llm.New(reviewModel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 		os.Exit(1)
@@ -314,6 +324,8 @@ func runMain() {
 	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq` (login_url, bash, gate, observe, outcome…).")
 	pos := parsePositionals(fs, os.Args[2:])
 	openEvents(*eventsPath)
+	// Resolve the driver model: --model > AXPROBE_MODEL > ~/.axprobe/config.yaml.
+	*model = config.ResolveModel(*model)
 
 	arg := ""
 	if len(pos) >= 1 {
@@ -355,6 +367,8 @@ func exploreMain() {
 		usage()
 	}
 	intent := strings.Join(pos, " ")
+	// Resolve the driver model: --model > AXPROBE_MODEL > ~/.axprobe/config.yaml.
+	*model = config.ResolveModel(*model)
 	if err := exploreCmd(intent, *model, *name, *workdir); err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 		os.Exit(1)
