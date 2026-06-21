@@ -1,0 +1,20 @@
+# axprobe-on-axprobe: measure how well axprobe itself onboards an agent into
+# authoring a first AX test — the Docker-free slice (orient + author + validate).
+# The goal is user-level: it never names axprobe's own commands or flags; the
+# agent must discover how a test is authored and checked from the tool alone.
+schema_version: "1"
+name: onboarding
+goal: You want to start measuring how easily an AI agent can operate a
+  command-line tool, using axprobe (already installed on this machine). Figure
+  out how an axprobe test is authored, write a first test for a simple CLI of
+  your choice (for example git), and confirm the test is well-formed and ready
+  to run. Finish when you have a valid test file and know exactly how you would
+  run it.
+
+# The AX bar: a well-onboarded tool lets the agent reach a valid first test from
+# its own help/guidance, with no human gate (authoring + validation need no
+# secrets) and no confusing errors.
+expect:
+  goal_reached: true
+  max_human_interventions: 0
+  max_false_errors: 0

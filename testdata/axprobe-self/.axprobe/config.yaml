@@ -1,0 +1,13 @@
+# Workspace config — install the product under test (axprobe itself) once.
+# Shared by every scenario in this .axprobe/ directory. axprobe-on-axprobe: we
+# measure how well axprobe guides an agent through authoring a first test.
+schema_version: "1"
+box:
+  image: ubuntu:24.04
+  setup:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates git
+    # Install the latest released axprobe the same way any user would.
+    - curl -fsSL https://github.com/segmentstream/axprobe/releases/latest/download/install.sh | sh
+    # install.sh drops the binary in $HOME/.axprobe/bin (not on PATH in a fresh
+    # box). Put it on PATH for every login shell the harness opens.
+    - echo 'export PATH="$HOME/.axprobe/bin:$HOME/.local/bin:$PATH"' > /etc/profile.d/axprobe.sh
