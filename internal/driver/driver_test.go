@@ -12,10 +12,10 @@ func TestDeclaredLoginMatchesFullPath(t *testing.T) {
 		LoginCommand: "segmentstream warehouse auth login --port 8085",
 	}}}
 	cases := map[string]bool{
-		"segmentstream warehouse auth login --json":                      true,
-		"/root/.segmentstream/bin/segmentstream warehouse auth login":    true, // full path
-		"segmentstream warehouse browse --json":                          false,
-		"segmentstream warehouse auth login --help":                      true, // matched here; help guard is separate
+		"segmentstream warehouse auth login --json":                   true,
+		"/root/.segmentstream/bin/segmentstream warehouse auth login": true, // full path
+		"segmentstream warehouse browse --json":                       false,
+		"segmentstream warehouse auth login --help":                   true, // matched here; help guard is separate
 	}
 	for cmd, want := range cases {
 		if _, got := declaredLogin(m, cmd); got != want {

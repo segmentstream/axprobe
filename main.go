@@ -22,8 +22,8 @@ import (
 	"github.com/segmentstream/axprobe/internal/box"
 	"github.com/segmentstream/axprobe/internal/broker"
 	"github.com/segmentstream/axprobe/internal/dotenv"
-	"github.com/segmentstream/axprobe/internal/events"
 	"github.com/segmentstream/axprobe/internal/driver"
+	"github.com/segmentstream/axprobe/internal/events"
 	"github.com/segmentstream/axprobe/internal/explore"
 	"github.com/segmentstream/axprobe/internal/lint"
 	"github.com/segmentstream/axprobe/internal/llm"
@@ -32,6 +32,8 @@ import (
 	"github.com/segmentstream/axprobe/internal/review"
 	"github.com/segmentstream/axprobe/internal/secrets"
 	"github.com/segmentstream/axprobe/internal/skill"
+	"github.com/segmentstream/axprobe/internal/update"
+	"github.com/segmentstream/axprobe/internal/version"
 )
 
 func usage() {
@@ -51,6 +53,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "      AX-review a run report into a paste-ready finding draft (does not file)")
 	fmt.Fprintln(os.Stderr, "  axprobe key set")
 	fmt.Fprintln(os.Stderr, "      store your OpenRouter API key in the Keychain (read from stdin)")
+	fmt.Fprintln(os.Stderr, "  axprobe update [--check]")
+	fmt.Fprintln(os.Stderr, "      update an install.sh-installed binary to the latest GitHub release")
+	fmt.Fprintln(os.Stderr, "  axprobe version")
+	fmt.Fprintln(os.Stderr, "      print the build version")
 	os.Exit(2)
 }
 
@@ -88,8 +94,32 @@ func main() {
 		reviewMain()
 	case "key":
 		keyMain()
+	case "update":
+		updateMain()
+	case "version":
+		versionMain()
 	default:
 		usage()
+	}
+}
+
+// versionMain prints the running build's version (stamped at release time).
+func versionMain() {
+	fmt.Printf("axprobe %s\n", version.Current().Version)
+}
+
+// updateMain self-updates a binary installed via install.sh: fetch the latest
+// GitHub release, verify its checksum, and atomically replace the running
+// binary. A dev/source build (version "dev") cannot self-update (semver rejects
+// it), which is correct — the dev wrapper rebuilds from source instead.
+func updateMain() {
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	check := fs.Bool("check", false, "check for an update without installing it")
+	_ = parsePositionals(fs, os.Args[2:])
+	updater := update.NewUpdater(version.Current(), os.Stdout, os.Stderr)
+	if err := updater.Run(context.Background(), update.Options{CheckOnly: *check}); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
 	}
 }
 
