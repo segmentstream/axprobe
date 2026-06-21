@@ -1,0 +1,47 @@
+version: 2
+
+project_name: axprobe
+
+builds:
+  - id: axprobe
+    main: .
+    binary: axprobe
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/segmentstream/axprobe/internal/version.Version={{ .Version }}
+      - -X github.com/segmentstream/axprobe/internal/version.Commit={{ .Commit }}
+      - -X github.com/segmentstream/axprobe/internal/version.Date={{ .Date }}
+
+archives:
+  - id: axprobe
+    ids:
+      - axprobe
+    formats:
+      - tar.gz
+    name_template: "axprobe_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: segmentstream
+    name: axprobe
+  mode: keep-existing
+  replace_existing_artifacts: true
+  extra_files:
+    - glob: ./install.sh
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github

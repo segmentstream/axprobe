@@ -51,10 +51,10 @@ type Observation struct {
 // ObservationCategories is the AX feedback taxonomy (defined with the product
 // owner). Order is the order shown in the report tally.
 var ObservationCategories = []string{
-	"missing_guidance", // the tool didn't say what to do; the agent had to guess
-	"confusion",        // confusing or false error, misleading output
-	"extra_steps",      // it took more steps than it should
-	"friction",         // it worked but was inconvenient/awkward
+	"missing_guidance",  // the tool didn't say what to do; the agent had to guess
+	"confusion",         // confusing or false error, misleading output
+	"extra_steps",       // it took more steps than it should
+	"friction",          // it worked but was inconvenient/awkward
 	"unclear_interface", // confusing command names, flags, or output structure
 }
 

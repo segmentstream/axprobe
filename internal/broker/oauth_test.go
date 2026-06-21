@@ -20,12 +20,12 @@ type fakeBox struct {
 	exitCode    int
 }
 
-func (f *fakeBox) Up() error                              { return nil }
-func (f *fakeBox) Exec(string) (box.ExecResult, error)   { return box.ExecResult{}, nil }
-func (f *fakeBox) CopyIn([]byte, string) error           { return nil }
-func (f *fakeBox) ArchiveOut([]string) ([]byte, error)   { return nil, nil }
-func (f *fakeBox) ArchiveIn([]byte) error                { return nil }
-func (f *fakeBox) Down() error                           { return nil }
+func (f *fakeBox) Up() error                           { return nil }
+func (f *fakeBox) Exec(string) (box.ExecResult, error) { return box.ExecResult{}, nil }
+func (f *fakeBox) CopyIn([]byte, string) error         { return nil }
+func (f *fakeBox) ArchiveOut([]string) ([]byte, error) { return nil, nil }
+func (f *fakeBox) ArchiveIn([]byte) error              { return nil }
+func (f *fakeBox) Down() error                         { return nil }
 func (f *fakeBox) ExecStream(cmd string, out io.Writer) (box.ExecResult, error) {
 	f.streamedCmd = cmd
 	fmt.Fprintln(out, "! First copy your one-time code: WDJB-MJHT")
