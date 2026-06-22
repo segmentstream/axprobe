@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/segmentstream/axprobe/internal/driver"
@@ -198,31 +199,31 @@ func ObservedBlock(r Report) string {
 	return b.String()
 }
 
-// RenderFinding assembles a finding in the agreed format. Observed comes from the
-// report (real evidence); title/summary/why/ideal/request are the judgment —
-// scaffolded by Draft, or written by the review agent.
-func RenderFinding(r Report, title, summary string, why []string, ideal string, request []string) string {
+// RenderFinding assembles a public-safe finding. Earlier versions printed the
+// raw transcript verbatim; that made good private diagnostics but poor public
+// issues. Keep the public issue sanitized by default and iterate review quality
+// from here as real AXprobe findings teach us better patterns.
+func RenderFinding(r Report, title, summary, observed string, why []string, ideal string, request []string) string {
 	var b strings.Builder
-	// Some reviewers prepend "Agentic UX:" themselves; strip it so we don't double it.
-	title = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(title), "Agentic UX:"))
-	fmt.Fprintf(&b, "Title: Agentic UX: %s\n\n", title)
-	fmt.Fprintf(&b, "## Summary\n%s\n\n", summary)
-	fmt.Fprintf(&b, "## Observed\n%s\n", ObservedBlock(r))
+	title = sanitizePublicText(stripTitlePrefixes(title), r)
+	fmt.Fprintf(&b, "Title: [AXprobe] Agentic UX: %s\n\n", title)
+	fmt.Fprintf(&b, "## Summary\n%s\n\n", sanitizePublicText(summary, r))
+	fmt.Fprintf(&b, "## Observed\n%s\n", sanitizedObserved(r, observed))
 
 	b.WriteString("\n## Why it matters (Agentic Experience)\n")
 	if len(why) == 0 {
 		b.WriteString("_(state which principle(s) this breaks)_\n")
 	} else {
 		for _, w := range why {
-			fmt.Fprintf(&b, "- %s\n", w)
+			fmt.Fprintf(&b, "- %s\n", sanitizePublicText(w, r))
 		}
 	}
 
-	b.WriteString("\n## Proposed flow (ideal)\n")
+	b.WriteString("\n## Desired Flow\n")
 	if strings.TrimSpace(ideal) == "" {
 		b.WriteString("_TODO (operator): the ideal transcript — what the interaction should look like._\n")
 	} else {
-		b.WriteString(strings.TrimRight(ideal, "\n") + "\n")
+		b.WriteString(strings.TrimRight(sanitizePublicText(ideal, r), "\n") + "\n")
 	}
 
 	b.WriteString("\n## Request\n")
@@ -230,11 +231,11 @@ func RenderFinding(r Report, title, summary string, why []string, ideal string, 
 		b.WriteString("_TODO (operator): concrete, numbered changes._\n")
 	} else {
 		for i, rq := range request {
-			fmt.Fprintf(&b, "%d. %s\n", i+1, rq)
+			fmt.Fprintf(&b, "%d. %s\n", i+1, sanitizePublicText(rq, r))
 		}
 	}
 
-	fmt.Fprintf(&b, "\n## Context\nFound via axprobe driving `%s` in a disposable sandbox.\n", r.Scenario)
+	b.WriteString("\n---\n\nReported from an AXprobe agentic experience review.\n")
 	return b.String()
 }
 
@@ -249,7 +250,7 @@ func Draft(r Report) string {
 	if strings.TrimSpace(summary) == "" {
 		summary = "The agent could not complete the goal — see the transcript below."
 	}
-	return RenderFinding(r, draftTitle(r), summary, why, "", nil)
+	return RenderFinding(r, draftTitle(r), summary, "", why, "", nil)
 }
 
 func draftTitle(r Report) string {
@@ -266,6 +267,113 @@ func draftTitle(r Report) string {
 		src = strings.TrimSpace(src[:80]) + "…"
 	}
 	return src
+}
+
+func stripTitlePrefixes(title string) string {
+	title = strings.TrimSpace(title)
+	for {
+		next := strings.TrimSpace(strings.TrimPrefix(title, "[AXprobe]"))
+		next = strings.TrimSpace(strings.TrimPrefix(next, "Agentic UX:"))
+		if next == title {
+			break
+		}
+		title = next
+	}
+	return title
+}
+
+func sanitizedObserved(r Report, observed string) string {
+	if strings.TrimSpace(observed) != "" {
+		return sanitizePublicText(strings.TrimSpace(observed), r) + "\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "An autonomous agentic harness attempted the workflow and ended with outcome `%s` before completing the goal.\n\n", sanitizePublicText(r.Outcome, r))
+	fmt.Fprintf(&b, "Run shape: goal reached `%v`, steps `%d`, human interventions `%d`, false errors `%d`.\n\n",
+		r.GoalReached, r.Steps, r.HumanInterventions, len(r.FalseErrors))
+	b.WriteString("The public issue draft should describe the minimal sanitized command sequence that proves the product gap without exposing private project identifiers or raw data.\n")
+	return b.String()
+}
+
+var (
+	localPathRE      = regexp.MustCompile(`(?m)(/Users/[^\s'"` + "`" + `]+|/private/tmp/[^\s'"` + "`" + `]+|/tmp/[^\s'"` + "`" + `]+)`)
+	bigQueryQuotedRE = regexp.MustCompile("`[A-Za-z][A-Za-z0-9_-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*`")
+	bigQueryBareRE   = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_\-]*\.[A-Za-z_][A-Za-z0-9_\-]*\b`)
+	bigQuerySlashRE  = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*/[A-Za-z_][A-Za-z0-9_\-]*/[A-Za-z_][A-Za-z0-9_\-]*\b`)
+	sourcePackageRE  = regexp.MustCompile(`\bsources/[A-Za-z0-9_-]+\b`)
+	reportPathRE     = regexp.MustCompile(`\b[A-Za-z0-9_.-]+\.report\.json\b`)
+	credentialPathRE = regexp.MustCompile(`(?i)\b[A-Za-z0-9_.-]*(credential|credentials|token|secret|key)[A-Za-z0-9_.-]*\.json\b`)
+	manifestPathRE   = regexp.MustCompile(`\B\.axprobe/[A-Za-z0-9_.-]+\.ya?ml\b`)
+	arbitrarySQLRE   = regexp.MustCompile(`(?i)\barbitrary SQL\b`)
+	escapedPayloadRE = regexp.MustCompile(`"\{\\?"[A-Za-z0-9_.-]+\\?":[^\n]*?\\?\}"`)
+	keysLikeRE       = regexp.MustCompile(`(?i)keys like\s+"[^"]+"(?:\s*,\s*"[^"]+")*`)
+)
+
+func sanitizePublicText(s string, r Report) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	s = localPathRE.ReplaceAllString(s, "<local-path>")
+	s = bigQueryQuotedRE.ReplaceAllString(s, "`<warehouse-table>`")
+	s = bigQueryBareRE.ReplaceAllString(s, "<warehouse-table>")
+	s = bigQuerySlashRE.ReplaceAllString(s, "<warehouse-table>")
+	s = sourcePackageRE.ReplaceAllString(s, "sources/<source-name>")
+	s = reportPathRE.ReplaceAllString(s, "<report.json>")
+	s = credentialPathRE.ReplaceAllString(s, "<credential-file>")
+	s = manifestPathRE.ReplaceAllString(s, ".axprobe/<scenario>.yaml")
+	s = arbitrarySQLRE.ReplaceAllString(s, "read-only SELECT SQL")
+	s = escapedPayloadRE.ReplaceAllString(s, `"<sample-payload>"`)
+	s = keysLikeRE.ReplaceAllString(s, "keys like <json-key>")
+	if strings.TrimSpace(r.Scenario) != "" {
+		s = strings.ReplaceAll(s, r.Scenario, "<scenario>")
+	}
+	if strings.TrimSpace(r.DriverModel) != "" {
+		s = strings.ReplaceAll(s, r.DriverModel, "<driver-model>")
+	}
+	for _, term := range scenarioPrivateTerms(r.Scenario) {
+		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(term) + `\b`)
+		s = re.ReplaceAllString(s, "<source-name>")
+	}
+	return s
+}
+
+func scenarioPrivateTerms(scenario string) []string {
+	parts := strings.FieldsFunc(strings.ToLower(scenario), func(r rune) bool {
+		return r == '-' || r == '_' || r == '.' || r == '/'
+	})
+	generic := map[string]bool{
+		"":              true,
+		"adapter":       true,
+		"agent":         true,
+		"axprobe":       true,
+		"cli":           true,
+		"custom":        true,
+		"event":         true,
+		"events":        true,
+		"flow":          true,
+		"harness":       true,
+		"init":          true,
+		"integration":   true,
+		"manifest":      true,
+		"project":       true,
+		"review":        true,
+		"run":           true,
+		"scenario":      true,
+		"segmentstream": true,
+		"smoke":         true,
+		"source":        true,
+		"test":          true,
+		"tool":          true,
+		"warehouse":     true,
+	}
+	var terms []string
+	for _, p := range parts {
+		if len(p) < 4 || generic[p] {
+			continue
+		}
+		terms = append(terms, p)
+	}
+	return terms
 }
 
 func nonNil(s []string) []string {

@@ -31,6 +31,11 @@ Requires a running **Docker** daemon (Docker Desktop or Colima). Set an
 [OpenRouter key](https://openrouter.ai/keys) via `OPENROUTER_API_KEY` (or a
 gitignored `.env` in the working directory).
 
+Installs made with `install.sh` can self-update with `axprobe update`. Release
+binaries installed that way also check for updates at most once per day on normal
+commands and print a short stderr notice when a newer release exists. Set
+`AXPROBE_NO_UPDATE_CHECK=1` to disable that passive check.
+
 Optional driver/review defaults live outside scenarios so the same scenario can
 run across a model matrix:
 

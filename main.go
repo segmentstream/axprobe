@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/segmentstream/axprobe/internal/box"
 	"github.com/segmentstream/axprobe/internal/broker"
@@ -94,6 +95,7 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 	}
+	maybeNotifyUpdate(os.Args[1])
 	switch os.Args[1] {
 	case "help", "--help", "-h":
 		// Explicit help is success, not a usage error: print to stdout, exit 0.
@@ -122,6 +124,19 @@ func main() {
 	default:
 		usage()
 	}
+}
+
+func maybeNotifyUpdate(command string) {
+	switch command {
+	case "help", "--help", "-h", "update", "version":
+		return
+	}
+	if os.Getenv("AXPROBE_NO_UPDATE_CHECK") != "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = update.NotifyIfAvailable(ctx, version.Current(), os.Stderr, update.NoticeOptions{})
 }
 
 // versionMain prints the running build's version (stamped at release time).
