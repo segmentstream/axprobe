@@ -68,16 +68,15 @@ Rules:
 - TRACE TO COMPLETION, not to the first friction. Identify the wall that actually blocks reaching the GOAL — it is often a step BEYOND where the agent stopped (e.g. the agent fixed the binding but still could not write the transform). Cover every blocking gap, not just the first.
 - NAME THE DEEPEST MISSING CAPABILITY the agent would have needed — including ones it never reached. Ask: to finish, what did it have to know or do that the tool gave no way to (e.g. could it even inspect the data it must transform?).
 - If the tool already exposed structured state (for example a resource location/region, resource ID, auth state, or next action), downstream commands should use it or provide a diagnostic that connects the dots. Requiring the agent to rediscover or manually reconcile known state is an AX defect.
-- Config and flag names must match the tested tool's domain model. If a domain has multiple scopes for the same concept (for example where a resource lives vs where an operation runs), name each scope explicitly using that domain's vocabulary instead of a broad global name. Misnaming a specific scoped property as a global tool property causes wrong mental models and bad agent decisions.
+- Only ask for more specific config/flag names when the transcript proves that one generic term is being used for different scopes and that ambiguity contributed to the failure. Otherwise keep the tested tool's existing domain term.
 - A CLI should be understandable without generated docs, markdown guides, skills, or prose-only instructions. In scaffold/authoring workflows, generated docs and .md files are an AX anti-pattern by default because they become stale prose skills instead of live tool behavior. Agentic workflows should be driven by help text, structured JSON, contracts, next_actions, generated file TODO markers, and diagnostics.
-- Do NOT request adding more instructions to generated docs or markdown guides as the fix. Do NOT include human_docs, docs, or markdown artifacts in the desired scaffold output unless the user's goal explicitly asks to generate documentation. If generated docs or markdown appeared in the run, request moving that guidance into structured CLI outputs, generated implementation files, help, next_actions, and diagnostics.
-- Do NOT request translating every upstream/provider error into a custom error. The tested tool should preserve the original provider error and add structured diagnostics only when it has deterministic context from config, discovery, or prior commands. Prefer fields like provider_error/raw_error, known_state, and affordances over hiding the original error.
-- When the transcript shows that a word is overloaded across scopes, distinguish those scopes. Use the exact domain terms proven by the transcript and propose scoped config/flag names that preserve that distinction.
-- When proposing an override for a scoped operation setting, prefer an operation-scoped flag name over a broad resource name. For example, if the transcript distinguishes where a resource lives from where an operation runs, propose a flag named for the operation's execution scope rather than a generic global name.
+- Do NOT request adding more instructions to generated docs or markdown guides as the fix. Do NOT request keeping generated docs/markdown as scaffold guidance "in addition to" structured output. Do NOT include human_docs, docs, or markdown artifacts in the desired scaffold output unless the user's goal explicitly asks to generate documentation. If generated docs or markdown appeared in the run, request moving that guidance into structured CLI outputs, generated implementation files, help, next_actions, and diagnostics.
+- Do NOT request translating every upstream/provider error into a custom error. When an upstream/provider error appears in the failure, the request or desired_transcript must preserve the original provider error and add structured diagnostics only when the tool has deterministic context from config, discovery, or prior commands. Prefer fields like provider_error/raw_error, known_state, and affordances over hiding the original error.
 - If the transcript includes a scaffold/generate/create-package command, assess scaffold AX even if a later command is the final blocker. The desired scaffold output should be structured state such as created_files, unresolved implementation items, verify command, and contract summary when the transcript proves those concepts. Do NOT ask for tutorial-style next_steps, and do NOT include docs/markdown outputs as a desired scaffold artifact.
 - If a browse/discovery command or driver post-mortem reveals scoped state that the failing command did not use, failed_transcript must show both facts: the discovered state and the conflicting state used by the failing command.
 - Every request item must include "change" and "why". The "why" must explain how that change improves the desired transcript or removes the observed AX failure, not just restate the change.
 - Base everything ONLY on what the transcript shows — do not invent commands the run did not imply.
+- If the report context includes hard review guardrails, treat them as mandatory constraints. Do not include a request or desired_transcript step that violates a guardrail.
 - Name the principle(s) broken (self-sufficiency, honest-state, missing-guidance, discover-don't-ask, …). If the run reveals no real defect, set "title" to "".`
 
 func reportContext(r report.Report) string {
@@ -102,7 +101,7 @@ func reportContext(r report.Report) string {
 		b.WriteString("\n")
 	}
 	if hints := reviewHints(r); len(hints) > 0 {
-		b.WriteString("\nreview hints (patterns the reviewer must consider, not pre-written findings):\n")
+		b.WriteString("\nhard review guardrails (must obey; derived from the transcript, not pre-written findings):\n")
 		for _, h := range hints {
 			fmt.Fprintf(&b, "- %s\n", h)
 		}
@@ -120,19 +119,19 @@ func reviewHints(r report.Report) []string {
 	// under test; manifests and run reports are the only source for product,
 	// command, and domain vocabulary.
 	if looksLikeGeneratedDocsDependency(body) {
-		hints = append(hints, "The run used generated docs or markdown. Treat scaffold-generated docs as an AX anti-pattern unless documentation was the user's goal; assess whether guidance belongs in structured CLI outputs, generated files, next_actions, and diagnostics instead.")
+		hints = append(hints, "The run used generated docs or markdown. Treat scaffold-generated docs as an AX anti-pattern unless documentation was the user's goal. Do not request keeping generated docs/markdown as scaffold guidance; request moving guidance into structured CLI outputs, generated files, next_actions, and diagnostics.")
+	}
+	if containsAny(body, "error", "failed", "not found", "provider") {
+		hints = append(hints, "The run contains an upstream/provider-style error. Preserve the original error in desired output and add structured diagnostics only when deterministic context is available.")
 	}
 	if containsAny(body, " scaffold ", " generate ", " create-package ", " created ") {
 		hints = append(hints, "The run involved scaffold/generation. The desired_transcript must include the scaffold/generation command and show machine-actionable output such as created_files, unresolved implementation items, verify command, and contract summary when those concepts appear in the transcript; do not request tutorial-style next_steps or docs/markdown artifacts.")
 	}
 	if containsAny(body, "location", "region", "zone", "scope") {
-		hints = append(hints, "The run involved scoped state. Assess whether the tool conflated a resource/container property with an operation/execution property, and use scoped names from the transcript rather than a generic global name.")
+		hints = append(hints, "The run mentioned location/region/scope. Only request more specific naming if the transcript proves one generic term was used for different scopes and that ambiguity contributed to the failure.")
 	}
 	if containsFullyQualifiedResource(r) {
-		hints = append(hints, "A failing command already used a fully qualified resource identifier. Do not request a separate project/account/workspace override unless the transcript proves that selecting that scope caused the failure.")
-	}
-	if containsAny(body, "query", "execute", "run") && containsAny(body, "location", "region") {
-		hints = append(hints, "The run involved an execution command plus location/region. If proposing an override for where execution runs, prefer an operation-scoped flag name over a generic resource-location flag name.")
+		hints = append(hints, "A failing command already used a fully qualified resource identifier. Forbidden unless explicitly proven by the transcript: requesting a separate project/account/workspace override merely because the resource is external or cross-project.")
 	}
 	return hints
 }

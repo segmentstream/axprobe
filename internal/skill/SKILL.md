@@ -176,30 +176,27 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 - Did the agent have to **ask a human** for something the tool could have
   discovered itself?
 - Does the tool **ship/embed its own agent guidance**? (An AX criterion in itself.)
-- Does the tool require generated docs, markdown, skills, or prose-only
-  instructions for the agent to proceed? A CLI should be understandable from help
-  text, structured JSON, contracts, next actions, generated file TODO markers, and
-  diagnostics. In scaffold/authoring workflows, generated docs and `.md` files are
-  an AX anti-pattern by default because they drift into stale prose skills instead
-  of live tool behavior.
-- Does the tool preserve upstream/provider errors while adding deterministic
-  structured context? Do not ask tools to translate every provider error; prefer
-  raw/provider error plus known state and recovery affordances when the tool has
-  enough context.
-- Does the request propose only missing capabilities proven by the transcript?
-  Do not ask for project/account/workspace override flags when the failing command
-  already identifies the external resource fully; ask for the scoped setting that
-  actually blocked the operation.
-- Does a scaffold/generate/create-package command return machine-actionable
-  state? A good scaffold response reports created files, unresolved implementation
-  surfaces, verification command, and contract summary when applicable. Avoid
-  tutorial-style `next_steps` and generated docs/markdown as the agent interface.
+- **Preserve upstream errors, add context.** Do not ask tools to translate every
+  provider error; prefer raw/provider error plus known state and recovery
+  affordances when the tool has enough deterministic context. If an upstream
+  error appears in the failure, the desired output should preserve it rather than
+  hide it behind a custom message.
+- **Scaffold returns machine-actionable state.** A scaffold/generate/create-package
+  response should report created files, unresolved implementation surfaces,
+  verification command, and contract summary when applicable. Avoid tutorial-style
+  `next_steps` and generated docs/markdown as the agent interface; do not request
+  keeping generated docs "in addition to" structured output unless documentation
+  itself was the user's goal.
+- **Do not invent unproven fixes.** Ask only for missing capabilities proven by
+  the transcript. Do not ask for project/account/workspace override flags when the
+  failing command already identifies the external resource fully; ask for the
+  setting that actually blocked the operation.
 - Does the tool expose structured state and then fail to use it downstream? If a
   command discovers a resource location, ID, auth state, or next action, later
   commands should consume it or return diagnostics that connect the dots.
-- Do config names match the domain model? Misnaming a specific resource property
-  as a global tool property is an AX defect because it gives agents the wrong
-  mental model.
+- Do config names match the domain model when ambiguity is proven? Ask for more
+  specific names only when the transcript shows one generic term being used for
+  different scopes and that ambiguity contributes to the failure.
 
 ## Decide vs ask the product owner
 
