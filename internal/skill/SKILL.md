@@ -43,6 +43,25 @@ command names.
   plumbing**, not agent-facing. `login_command`, `callback_port`, `token_paths`
   are tool-specific there and that is fine; the agent never sees them.
 
+## Credentials: authorize once, reuse warm
+
+An auth fixture declares `credentials` (with a `login_command` and `token_paths`).
+Don't picture re-authorizing every run — and don't write the fixture as if you
+must:
+
+- The **first** run performs the real browser login. That is a genuine human gate
+  (a human intervention — HIC counts it). axprobe then **caches** the resulting
+  token files in the macOS Keychain, keyed by the login command's base, so related
+  fixtures share the one authorization.
+- **Subsequent** runs **restore** those cached tokens — warm, no login, HIC drops
+  to 0. One manual authorization is reused across every later run.
+- `reset: {secrets: true}` (or `--reset`) **purges** the cached token to force a
+  **cold** run — re-doing the login — e.g. to exercise the from-scratch auth path
+  on purpose.
+- The agent never sees the token; this is harness plumbing.
+
+So: authorize once, then runs are warm; reset only when you want to test cold.
+
 ## Fixture anatomy
 
 ```yaml
@@ -67,6 +86,30 @@ expect:  { goal_reached: true, max_human_interventions: 1, max_false_errors: 0 }
 Don't hand-write YAML. Give `explore` a user-level intent; it drives the tool in
 the sandbox and synthesizes a correct-by-construction manifest (plumbing
 separated, schema valid), then lints the goal. Review the draft before committing.
+
+## Development loop
+
+A fixture is an executable spec, so it belongs in your edit loop. After you change
+the tool under test (a command, a flag, help text, output, an error), close the
+loop on AX before you move on:
+
+1. **Regression** — `axprobe run <scenario>` for the scenarios that exercise the
+   surface you touched. They re-drive the agent against the known goal and turn red
+   if the change made the tool harder to operate. This catches *regressions on paths
+   you already chose to measure*.
+2. **Discovery** — if you changed the **interface** (renamed a command, reshaped a
+   flag/output, altered the guidance the agent reads), `axprobe explore "<fresh user
+   intent>"` drives a brand-new plain-language intent through the box and synthesizes
+   a scenario. This surfaces *new* friction your existing fixtures can't see, because
+   they were written against the old interface and ask only their old questions.
+3. **Red → fix** — a red run or fresh friction is a finding: file it (human-gated) or
+   fix the tool, then re-run until green.
+
+**run vs explore** — `run` is regression on a *known* scenario (did AX hold?);
+`explore` is discovery of *new* friction after an interface change (what does the
+new surface trip on?). Run alone tells you the old goals still pass; it cannot tell
+you the rename you just shipped confuses a first-time agent. After an interface
+change, do both.
 
 ## Watching a run
 

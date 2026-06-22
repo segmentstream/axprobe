@@ -1,0 +1,86 @@
+# axprobe-on-axprobe: measure whether axprobe teaches the DEVELOPMENT LOOP — that
+# after you change a CLI tool you re-measure its agentic experience before moving
+# on. The agent is asked to improve a tiny CLI; the AX under test is whether it
+# RE-RUNS axprobe (regression run, or explore after the interface change) once the
+# edit is made, instead of declaring victory on the code change alone.
+#
+# The goal is user-level: it never names axprobe's own commands or flags. The agent
+# must learn the "re-measure after a change" discipline from the tool's own bundled
+# guidance — discovering that discipline IS the AX under test.
+#
+# --- Honest caveats (read before trusting a green run) ---
+#
+# (a) NO AUTO-LOADED SKILL. The in-box driver is deliberately simple and does NOT
+#     auto-load the operator-facing axprobe-author skill. So this box installs the
+#     skill explicitly (`axprobe skill --install` writes it under .claude/skills/)
+#     AND the goal points the agent at "the tool's own built-in guidance for working
+#     on a CLI". Without both, the agent has no way to learn the loop and the test
+#     measures nothing — it would just check whether the model guesses the habit.
+#
+# (b) DOCKER-IN-BOX (DinD). axprobe drives its tool inside a disposable Docker box,
+#     and it cannot bring up its own nested box inside this box. So a re-run started
+#     here will NOT complete a real sandboxed run. The signal we measure is INTENT:
+#     the transcript shows the agent invoking the re-measure (a `run`/`explore`
+#     against its improved tool) right after the edit — not a finished run. A green
+#     "goal_reached" means the agent closed the loop in intent, which is the habit
+#     we are testing for.
+#
+# (c) EXPECT IS A PROXY. axprobe's `expect` schema only has goal_reached /
+#     max_human_interventions / max_false_errors. None of those directly assert "did
+#     it re-run axprobe after the change". So `expect` only fences the cheap signals
+#     (reached the goal, no human gate, no false errors); the REAL assertion — that
+#     the transcript re-measures AX after the edit, run vs explore as appropriate —
+#     is verified by the reviewer / post-mortem reading the transcript, not by the
+#     harness. Treat a green run as necessary, not sufficient, until reviewed.
+
+schema_version: "1"
+name: dev-loop
+
+# Self-contained box: a scenario that defines its own `box:` does NOT inherit the
+# sibling config.yaml, so we reproduce its install pattern here and add the two
+# things this scenario needs: the bundled skill, and a tiny CLI to improve.
+box:
+  image: ubuntu:24.04
+  setup:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates git python3
+    # Install the latest released axprobe exactly as a user would (same as config.yaml).
+    - curl -fsSL https://github.com/segmentstream/axprobe/releases/latest/download/install.sh | sh
+    # install.sh drops the binary in $HOME/.axprobe/bin (not on PATH in a fresh box).
+    - echo 'export PATH="$HOME/.axprobe/bin:$HOME/.local/bin:$PATH"' > /etc/profile.d/axprobe.sh
+    # The agent works from /workspace (the box's mounted workdir). Make it a repo so
+    # the skill install + sample tool land where the agent starts.
+    - mkdir -p /workspace && cd /workspace && git init -q
+    # Caveat (a): the simple driver won't auto-load it, so install the operator skill
+    # under /workspace/.claude/skills/ where the agent can read the tool's own guidance.
+    - cd /workspace && export PATH="$HOME/.axprobe/bin:$PATH" && axprobe skill --install
+    # A tiny sample CLI to improve: `greet` prints a greeting but has an obvious gap —
+    # no way to greet loudly/uppercase, and `--help` barely documents anything. This
+    # is the change the agent will make, then is expected to re-measure.
+    - |
+      cat > /workspace/greet <<'EOF'
+      #!/usr/bin/env python3
+      import sys
+      def main():
+          args = [a for a in sys.argv[1:] if not a.startswith("-")]
+          name = args[0] if args else "world"
+          print("Hello, " + name + "!")
+      if __name__ == "__main__":
+          main()
+      EOF
+    - chmod +x /workspace/greet
+
+goal: You maintain a small command-line tool in this folder called "greet" — it
+  prints a greeting. Improve it so a user can ask for a loud, all-caps greeting,
+  and make its built-in help clearly explain how to use it. This tool ships with
+  its own built-in guidance on how to work on a command-line program; read that
+  guidance first and follow the working style it recommends. You are done when you
+  have applied the improvement and followed that recommended way of working through
+  to the end.
+
+# The AX bar (a proxy — see caveat (c)): the agent reaches the goal with no human
+# gate and no confusing errors. Whether it actually re-measured AX after its edit
+# is confirmed by the reviewer over the transcript.
+expect:
+  goal_reached: true
+  max_human_interventions: 0
+  max_false_errors: 0
