@@ -29,6 +29,21 @@
         }
       }
     },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Repo/workspace-level operator defaults. Flags and environment variables override these; ~/.axprobe/config.yaml is the fallback below these.",
+      "properties": {
+        "driver_model": {
+          "type": "string",
+          "description": "Default OpenRouter model id for the LLM driver when --driver-model and AXPROBE_DRIVER_MODEL are unset."
+        },
+        "review_model": {
+          "type": "string",
+          "description": "Default OpenRouter model id for axprobe review when --review-model and AXPROBE_REVIEW_MODEL are unset."
+        }
+      }
+    },
     "credentials": {
       "type": "array",
       "description": "Credentials shared across scenarios. A scenario may add or override by name. See the scenario schema for the credential shape.",

@@ -2,7 +2,7 @@
 // experience.
 //
 //	axprobe run <manifest.yaml>                 # Layer 0: scripted probes
-//	axprobe run --model <id> <manifest.yaml>    # Layer 1: LLM driver via OpenRouter
+//	axprobe run --driver-model <id> <manifest.yaml>    # Layer 1: LLM driver via OpenRouter
 //
 // Both share the same box and manifest; only the "driver" differs. The LLM
 // driver needs OPENROUTER_API_KEY in the environment.
@@ -48,10 +48,10 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  axprobe init")
 	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + an example scenario")
-	fmt.Fprintln(w, "  axprobe run [--model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
+	fmt.Fprintln(w, "  axprobe run [--driver-model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
 	fmt.Fprintln(w, "      with no argument, runs every .axprobe/*.yaml in the current directory")
 	fmt.Fprintln(w, "      --workdir mounts a persistent project (live journey); --reset starts cold")
-	fmt.Fprintln(w, "  axprobe explore --model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
+	fmt.Fprintln(w, "  axprobe explore --driver-model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
 	fmt.Fprintln(w, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
 	fmt.Fprintln(w, "  axprobe probe [--image <img>] <command> [<command>...]")
 	fmt.Fprintln(w, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
@@ -59,7 +59,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
 	fmt.Fprintln(w, "  axprobe skill [--install]")
 	fmt.Fprintln(w, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
-	fmt.Fprintln(w, "  axprobe review [--model <id>] <report.json>")
+	fmt.Fprintln(w, "  axprobe review [--review-model <id>] <report.json>")
 	fmt.Fprintln(w, "      AX-review a run report into a paste-ready finding draft (does not file)")
 	fmt.Fprintln(w, "  axprobe key set")
 	fmt.Fprintln(w, "      store your OpenRouter API key in the Keychain (read from stdin)")
@@ -173,14 +173,20 @@ func initMain() {
 	if wrote {
 		fmt.Println("\nNext:")
 		fmt.Println("  1. edit .axprobe/config.yaml — set box.image and the setup commands that install your tool")
-		fmt.Println("  2. write your goal in .axprobe/example.yaml (or: axprobe explore --model <id> \"<intent>\")")
+		fmt.Println("  2. write your goal in .axprobe/example.yaml (or: axprobe explore --driver-model <id> \"<intent>\")")
 		fmt.Println("  3. axprobe lint example          # check the goal reads as user intent")
-		fmt.Println("  4. axprobe run example --model <id>")
+		fmt.Println("  4. axprobe run example --driver-model <id>")
 	}
 }
 
 const configScaffold = `schema_version: "1"
 # The workspace: how to install the tool under test in a fresh, disposable box.
+# Optional repo-level defaults. Flags/env override these; ~/.axprobe/config.yaml
+# is the fallback if these are unset.
+# defaults:
+#   driver_model: moonshotai/kimi-k2.6
+#   review_model: anthropic/claude-opus-4.8
+
 box:
   image: ubuntu:24.04
   setup:
@@ -234,12 +240,13 @@ func keyMain() {
 }
 
 // reviewMain is the AX review agent: from a run report it drafts a paste-ready
-// finding. With --model an LLM reviewer (guided by the skill) writes the judgment
-// parts; without it, a mechanical scaffold. The Observed transcript is always
-// verbatim from the report. It prints the draft — it never files (human-gated).
+// finding. With --review-model an LLM reviewer (guided by the skill) writes the
+// judgment parts; without it, a mechanical scaffold. The Observed transcript is
+// always verbatim from the report. It prints the draft — it never files
+// (human-gated).
 func reviewMain() {
 	fs := flag.NewFlagSet("review", flag.ExitOnError)
-	model := fs.String("model", "", "Judge model id (else AXPROBE_REVIEW_MODEL, then review_model in ~/.axprobe/config.yaml). Prefer a stronger model than the driver. Unset → mechanical scaffold.")
+	reviewModelFlag := fs.String("review-model", "", "Judge model id (else AXPROBE_REVIEW_MODEL, .axprobe/config.yaml defaults.review_model, then ~/.axprobe/config.yaml review_model). Prefer a stronger model than the driver. Unset → mechanical scaffold.")
 	pos := parsePositionals(fs, os.Args[2:])
 	if len(pos) < 1 {
 		usage()
@@ -255,18 +262,23 @@ func reviewMain() {
 		os.Exit(1)
 	}
 
-	// Resolve the judge model: --model > AXPROBE_REVIEW_MODEL > config.review_model.
+	workspaceReviewModel := ""
+	if cfg, err := manifest.LoadConfig(filepath.Join(".axprobe", manifest.ConfigFile)); err == nil && cfg != nil {
+		workspaceReviewModel = cfg.Defaults.ReviewModel
+	}
+	// Resolve the judge model: --review-model > AXPROBE_REVIEW_MODEL >
+	// .axprobe/config.yaml:defaults.review_model > ~/.axprobe/config.yaml:review_model.
 	// It does NOT fall back to the driver model: an unset judge means the
 	// mechanical scaffold, never "reuse the weak driver as judge".
-	reviewModel := config.ResolveReviewModel(*model)
+	reviewModel := config.ResolveReviewModel(*reviewModelFlag, workspaceReviewModel)
 	if reviewModel == "" {
 		fmt.Print(report.Draft(rep))
 		return
 	}
 	// The judge should be stronger than — and distinct from — the model under
 	// measurement. If they coincide, the instrument is grading itself; warn.
-	if rep.Model != "" && reviewModel == rep.Model {
-		fmt.Fprintf(os.Stderr, "axprobe: warning: review model %q is the same as the driver model that produced this report — the judge is the instrument. Prefer a stronger review model (--model, AXPROBE_REVIEW_MODEL, or review_model in ~/.axprobe/config.yaml).\n", reviewModel)
+	if rep.DriverModel != "" && reviewModel == rep.DriverModel {
+		fmt.Fprintf(os.Stderr, "axprobe: warning: review model %q is the same as the driver model that produced this report — the judge is the instrument. Prefer a stronger review model (--review-model, AXPROBE_REVIEW_MODEL, .axprobe/config.yaml:defaults.review_model, or ~/.axprobe/config.yaml:review_model).\n", reviewModel)
 	}
 	client, err := llm.New(reviewModel)
 	if err != nil {
@@ -387,13 +399,16 @@ func probeCmd(commands []string, image string) error {
 			return err
 		}
 		printResult(res)
+		if res.ExitCode != 0 {
+			return fmt.Errorf("probe failed (exit %d): %s", res.ExitCode, cmd)
+		}
 	}
 	return nil
 }
 
 func runMain() {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	model := fs.String("model", "", "OpenRouter model id (e.g. moonshotai/kimi-k2.6). If set, use the LLM driver instead of scripted probes.")
+	driverModel := fs.String("driver-model", "", "OpenRouter model id for the LLM driver (e.g. moonshotai/kimi-k2.6). Falls back to AXPROBE_DRIVER_MODEL, repo defaults, then user defaults. If configured, use the LLM driver instead of scripted probes.")
 	reportPath := fs.String("report", "", "Path to write the JSON AX report (default <scenario>.report.json for LLM runs).")
 	unattended := fs.Bool("unattended", false, "No interactive gates: satisfy oauth from a cached/provisioned token or end stopped_at_gate (for CI).")
 	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = disposable.")
@@ -401,8 +416,6 @@ func runMain() {
 	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq` (login_url, bash, gate, observe, outcome…).")
 	pos := parsePositionals(fs, os.Args[2:])
 	openEvents(*eventsPath)
-	// Resolve the driver model: --model > AXPROBE_MODEL > ~/.axprobe/config.yaml.
-	*model = config.ResolveModel(*model)
 
 	arg := ""
 	if len(pos) >= 1 {
@@ -422,7 +435,7 @@ func runMain() {
 		if len(manifests) > 1 {
 			rp = ""
 		}
-		if err := cmdRun(mp, *model, rp, *unattended, *workdir, *reset); err != nil {
+		if err := cmdRun(mp, *driverModel, rp, *unattended, *workdir, *reset); err != nil {
 			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 			failed = true
 		}
@@ -434,7 +447,7 @@ func runMain() {
 
 func exploreMain() {
 	fs := flag.NewFlagSet("explore", flag.ExitOnError)
-	model := fs.String("model", "", "OpenRouter model id (required).")
+	driverModel := fs.String("driver-model", "", "OpenRouter model id for the LLM driver (else AXPROBE_DRIVER_MODEL, repo defaults, then user defaults).")
 	name := fs.String("name", "", "Scenario name → .axprobe/<name>.yaml (default derived from intent).")
 	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped.")
 	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq`.")
@@ -444,9 +457,7 @@ func exploreMain() {
 		usage()
 	}
 	intent := strings.Join(pos, " ")
-	// Resolve the driver model: --model > AXPROBE_MODEL > ~/.axprobe/config.yaml.
-	*model = config.ResolveModel(*model)
-	if err := exploreCmd(intent, *model, *name, *workdir); err != nil {
+	if err := exploreCmd(intent, *driverModel, *name, *workdir); err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 		os.Exit(1)
 	}
@@ -487,7 +498,7 @@ func fileExists(p string) bool {
 
 // parsePositionals parses flags that may appear before OR after positional
 // arguments. Go's flag package stops at the first positional, which silently
-// dropped flags like `axprobe run <name> --model X`; this re-parses around them.
+// dropped flags like `axprobe run <name> --driver-model X`; this re-parses around them.
 func parsePositionals(fs *flag.FlagSet, args []string) []string {
 	var pos []string
 	for {
@@ -510,17 +521,22 @@ func filterOut(items []string, drop string) []string {
 	return out
 }
 
-func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir string, reset bool) error {
+func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, workdir string, reset bool) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
 		return err
 	}
+	driverModel := config.ResolveDriverModel(driverModelFlag, m.Defaults.DriverModel)
 
-	// Build the LLM client up front so a missing key/model fails before we spin
-	// up a box and run setup.
+	if driverModel == "" && len(m.Probes) == 0 {
+		return fmt.Errorf("no driver model configured and manifest %q has no probes: this would only run setup\n  set --driver-model, AXPROBE_DRIVER_MODEL, .axprobe/config.yaml:defaults.driver_model, or ~/.axprobe/config.yaml:driver_model", m.Name)
+	}
+
+	// Build the LLM client up front so a missing key fails before we spin up a box
+	// and run setup.
 	var client *llm.Client
-	if model != "" {
-		client, err = llm.New(model)
+	if driverModel != "" {
+		client, err = llm.New(driverModel)
 		if err != nil {
 			return err
 		}
@@ -530,8 +546,8 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir str
 	if m.Goal != "" {
 		fmt.Printf("▸ goal:     %s\n", m.Goal)
 	}
-	if model != "" {
-		fmt.Printf("▸ driver:   llm (%s)\n", model)
+	if driverModel != "" {
+		fmt.Printf("▸ driver:   llm (%s)\n", driverModel)
 	} else {
 		fmt.Printf("▸ driver:   scripted probes\n")
 	}
@@ -542,11 +558,19 @@ func cmdRun(manifestPath, model, reportPath string, unattended bool, workdir str
 		clearWorkdirPaths(workdir, m.Reset.Paths)
 	}
 
-	b, teardown, err := bringUp(m, workdir)
+	b, boxDown, err := bringUp(m, workdir)
 	if err != nil {
 		return err
 	}
-	defer teardown()
+	defer boxDown()
+	// Fixture teardown disposes the tool's EXTERNAL side-effects (cloud resources
+	// that outlive the box). Deferred AFTER boxDown so — LIFO — it runs FIRST, while
+	// the box (and its warm creds) is still up; boxDown then disposes the container.
+	// Runs on every exit path (success, failure, panic) so a failed run leaves no
+	// orphans — the whole point of declaring cleanup in the manifest.
+	if m.Teardown != nil && len(m.Teardown.Run) > 0 {
+		defer runTeardown(b, m.Teardown)
+	}
 
 	if client == nil {
 		return runProbes(b, m) // Layer 0
@@ -574,6 +598,30 @@ func clearWorkdirPaths(workdir string, paths []string) {
 		}
 		fmt.Printf("▸ reset:    cleared %s\n", p)
 	}
+}
+
+// runTeardown executes a fixture's declared cleanup commands in the box, after
+// the run. Each command runs even if a prior one failed (cleanup is best-effort
+// and must be exhaustive); a non-zero exit is reported, never fatal — the run's
+// verdict already stands. The summary line makes silent orphans visible.
+func runTeardown(b box.Box, t *manifest.Teardown) {
+	var ran, failed int
+	for _, cmd := range t.Run {
+		fmt.Printf("▸ teardown: %s\n", cmd)
+		ran++
+		res, err := b.Exec(cmd)
+		if err != nil {
+			failed++
+			fmt.Fprintf(os.Stderr, "  warning: teardown %q: %v\n", cmd, err)
+			continue
+		}
+		printResult(res)
+		if res.ExitCode != 0 {
+			failed++
+			fmt.Fprintf(os.Stderr, "  warning: teardown %q exited %d (resource may be orphaned)\n", cmd, res.ExitCode)
+		}
+	}
+	fmt.Printf("▸ teardown: %d ran, %d failed\n", ran, failed)
 }
 
 // bringUp creates a fresh box, starts it, and runs the manifest's setup. The
@@ -626,10 +674,7 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 
 // exploreCmd drives a plain-language intent once, discovering credentials
 // interactively, and synthesizes a scenario manifest under .axprobe/.
-func exploreCmd(intent, model, name, workdir string) error {
-	if model == "" {
-		return fmt.Errorf("explore requires --model")
-	}
+func exploreCmd(intent, driverModelFlag, name, workdir string) error {
 	cfg, err := manifest.LoadConfig(filepath.Join(".axprobe", manifest.ConfigFile))
 	if err != nil {
 		return err
@@ -638,10 +683,14 @@ func exploreCmd(intent, model, name, workdir string) error {
 		return fmt.Errorf("no workspace found: .axprobe/%s is missing (it defines how to install the tool under test).\n"+
 			"Run `axprobe init` to scaffold one, then set box.image and the setup commands.", manifest.ConfigFile)
 	}
+	driverModel := config.ResolveDriverModel(driverModelFlag, cfg.Defaults.DriverModel)
+	if driverModel == "" {
+		return fmt.Errorf("explore requires --driver-model, AXPROBE_DRIVER_MODEL, .axprobe/config.yaml:defaults.driver_model, or ~/.axprobe/config.yaml:driver_model")
+	}
 	if name == "" {
 		name = slug(intent)
 	}
-	client, err := llm.New(model)
+	client, err := llm.New(driverModel)
 	if err != nil {
 		return err
 	}
@@ -728,6 +777,9 @@ func runProbes(b box.Box, m *manifest.Manifest) error {
 			return err
 		}
 		printResult(res)
+		if res.ExitCode != 0 {
+			return fmt.Errorf("probe failed (exit %d): %s", res.ExitCode, p)
+		}
 	}
 	return nil
 }
@@ -807,7 +859,11 @@ func checkWorkdirSecrets(workdir string) error {
 	for _, pat := range []string{".env", ".env.*", "*.pem", "*credential*.json", "*key*.json", "*secret*"} {
 		m, _ := filepath.Glob(filepath.Join(workdir, pat))
 		for _, h := range m {
-			hits = append(hits, filepath.Base(h))
+			base := filepath.Base(h)
+			if isSecretExample(base) {
+				continue
+			}
+			hits = append(hits, base)
 		}
 	}
 	if len(hits) == 0 {
@@ -820,6 +876,15 @@ func checkWorkdirSecrets(workdir string) error {
 	return fmt.Errorf("refusing to mount --workdir — it holds secret-looking files the sandboxed agent could read: %s\n"+
 		"  move them out (axprobe's key belongs in the Keychain via `axprobe key set`), or set AXPROBE_ALLOW_WORKDIR_SECRETS=1 to override",
 		strings.Join(hits, ", "))
+}
+
+func isSecretExample(name string) bool {
+	switch name {
+	case ".env.example", ".env.sample", ".env.template", ".env.defaults":
+		return true
+	default:
+		return false
+	}
 }
 
 // printResult renders one command's output, indented, with its exit code.

@@ -67,19 +67,29 @@ So: authorize once, then runs are warm; reset only when you want to test cold.
 ```yaml
 goal: <user-level intent, pinned values, no tool interface>
 credentials: [ ... ]          # plumbing: secrets / oauth login the harness runs
-reset:   { secrets: true }    # auth fixture → cold every run (box resets in-box state for free)
+reset:   { secrets: true }    # BEFORE the run: auth fixture → cold every run (box resets in-box state for free)
+teardown: { run: [ "mytool resource destroy probe --yes" ] }   # AFTER the run: dispose external resources it created
 expect:  { goal_reached: true, max_human_interventions: 1, max_false_errors: 0 }
 ```
 
 - **`reset`** returns the fixture to a clean baseline *before* the run. The
   disposable box already resets in-box state; `secrets: true` purges the cached
-  token so an auth fixture is exercised cold. (Cloud/SaaS teardown belongs here too
-  once a fixture creates such state.)
+  token so an auth fixture is exercised cold. It clears **axprobe's own footprint**
+  (its secret cache, its declared output paths) — host-side, typed, never arbitrary
+  shell.
+- **`teardown`** disposes the **tool's footprint in the real world** *after* the run
+  — cloud resources that outlive the disposable box (a Turso DB, a GitHub repo, a
+  deploy). Its `run` commands execute IN-BOX (same warm creds as the run), in the
+  box's defer path, so they fire on success, failure, and crash alike — no orphans.
+  Declare ONE symmetric tool command that cascades (`mytool agent destroy probe`),
+  not a pile of raw provider calls. This is the opposite phase/domain from `reset`:
+  reset = before / axprobe's state; teardown = after / the tool's external state.
 - **`expect`** is the AX bar — the run exits non-zero if missed, so a fixture is an
   **executable spec**: write it red, implement until green, regressions turn it red.
-- **Containment**: confine created resources to a namespace you can reset (e.g. a
-  dataset prefix). Mutation-safety for an unattended fixture is **pre-authorized
-  containment** (namespace + reset), not per-operation approval.
+- **Containment**: a fixture that creates real resources must declare how to undo
+  them. Confine them to a namespace (e.g. a `probe-` prefix) AND declare `teardown`
+  to destroy them. Mutation-safety for an unattended fixture is **pre-authorized
+  containment** (namespace + teardown), not per-operation approval.
 
 ## Prefer `explore` to author
 
@@ -117,7 +127,7 @@ Launch in the background with a JSONL event stream and tail it — reliable to p
 no grepping human output:
 
 ```
-axprobe run <scenario> --workdir . --model <id> --events /tmp/run.jsonl >/tmp/run.log 2>&1 &
+axprobe run <scenario> --workdir . --driver-model <id> --events /tmp/run.jsonl >/tmp/run.log 2>&1 &
 tail -f /tmp/run.jsonl | jq -c .
 ```
 
@@ -197,9 +207,9 @@ A finding is a **GitHub issue in the tool's repo, in English**, framed as
 
 ## Filing is human-gated
 
-Drafting a finding is automatic — `axprobe review [--model <id>] <report.json>`
+Drafting a finding is automatic — `axprobe review [--review-model <id>] <report.json>`
 renders a paste-ready draft (Observed transcript verbatim from the report; with
---model an LLM reviewer guided by this skill writes the why / ideal / request).
+--review-model an LLM reviewer guided by this skill writes the why / ideal / request).
 **Filing** it is an external, public action on a shared system, so it stays in the
 "ask" bucket (decide-vs-ask category 2): show the product owner the FULL rendered
 draft and get approval BEFORE filing — not just the intent or a summary. The owner

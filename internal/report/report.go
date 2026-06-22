@@ -17,7 +17,7 @@ import (
 
 // schemaVersion is the version of the report contract (schema/report.schema.json).
 // Bump on breaking changes so regression consumers can adapt.
-const schemaVersion = "1"
+const schemaVersion = "2"
 
 // Tokens is the token/cost accounting block.
 type Tokens struct {
@@ -32,7 +32,7 @@ type Tokens struct {
 type Report struct {
 	SchemaVersion      string               `json:"schema_version"`
 	Scenario           string               `json:"scenario"`
-	Model              string               `json:"model"`
+	DriverModel        string               `json:"driver_model"`
 	Outcome            string               `json:"outcome"`
 	GoalReached        bool                 `json:"goal_reached"`
 	HumanInterventions int                  `json:"human_interventions"`
@@ -53,7 +53,7 @@ func From(scenario string, r *driver.Result) Report {
 	return Report{
 		SchemaVersion:      schemaVersion,
 		Scenario:           scenario,
-		Model:              r.Model,
+		DriverModel:        r.DriverModel,
 		Outcome:            r.Outcome,
 		GoalReached:        r.GoalReached,
 		HumanInterventions: len(r.Gates),
@@ -110,7 +110,7 @@ func (r Report) WriteJSON(path string) error {
 func (r Report) PrintHuman(w io.Writer) {
 	fmt.Fprintln(w, "\n── AX report ───────────────────────────────")
 	fmt.Fprintf(w, "scenario:            %s\n", r.Scenario)
-	fmt.Fprintf(w, "model:               %s\n", r.Model)
+	fmt.Fprintf(w, "driver_model:        %s\n", r.DriverModel)
 	fmt.Fprintf(w, "outcome:             %s\n", r.Outcome)
 	fmt.Fprintf(w, "goal_reached:        %v\n", r.GoalReached)
 	fmt.Fprintf(w, "human_interventions: %d\n", r.HumanInterventions)
@@ -178,7 +178,7 @@ const maxDraftSteps = 15
 func ObservedBlock(r Report) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Driving `%s` with %s (outcome: %s, HIC: %d, false_errors: %d):\n\n```\n",
-		r.Scenario, r.Model, r.Outcome, r.HumanInterventions, len(r.FalseErrors))
+		r.Scenario, r.DriverModel, r.Outcome, r.HumanInterventions, len(r.FalseErrors))
 	steps := r.Transcript
 	if len(steps) > maxDraftSteps {
 		fmt.Fprintf(&b, "… (%d earlier steps omitted) …\n", len(steps)-maxDraftSteps)

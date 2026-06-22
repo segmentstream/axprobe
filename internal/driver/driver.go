@@ -88,7 +88,7 @@ type Step struct {
 
 // Result holds the approved v0 telemetry for a driven run.
 type Result struct {
-	Model         string
+	DriverModel   string
 	Outcome       string // goal_reached | stopped_at_gate | stuck | error
 	GoalReached   bool
 	Reached       bool // raw flag from finish(); GoalReached is the reconciled value
@@ -123,7 +123,7 @@ func (r *Result) finalize() {
 	events.Emit("outcome", "outcome", r.Outcome, "goal_reached", r.GoalReached)
 }
 
-// Driver couples a box, a manifest goal, a model and a gatekeeper.
+// Driver couples a box, a manifest goal, a driver model and a gatekeeper.
 type Driver struct {
 	box  box.Box
 	m    *manifest.Manifest
@@ -139,7 +139,7 @@ func New(b box.Box, m *manifest.Manifest, client *llm.Client, gk Gatekeeper) *Dr
 // Run drives the box toward the goal until the model calls finish/gate or the
 // step budget runs out.
 func (d *Driver) Run(ctx context.Context) (*Result, error) {
-	res := &Result{Model: d.llm.Model}
+	res := &Result{DriverModel: d.llm.Model}
 	start := time.Now()
 	defer func() { res.DurationSec = time.Since(start).Seconds() }()
 
