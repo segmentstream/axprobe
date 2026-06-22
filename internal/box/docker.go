@@ -27,6 +27,12 @@ type LocalDockerBox struct {
 	// It is never wiped by the harness; it is the user's real repo.
 	Workdir     string
 	containerID string
+	// basePath is the image's own $PATH, captured from a non-login shell at Up.
+	// Commands run in a login shell (so profile.d-installed tools are found), which
+	// rebuilds PATH from /etc/profile and drops the image's ENV PATH; we re-add
+	// basePath so image-installed tools (e.g. `go` in the golang image) are found
+	// without fixtures hardcoding absolute paths.
+	basePath string
 }
 
 // NewLocalDockerBox returns a box backed by the given image (e.g. "ubuntu:24.04").
@@ -65,6 +71,12 @@ func (b *LocalDockerBox) Up() error {
 	b.containerID = strings.TrimSpace(stdout)
 	if b.containerID == "" {
 		return fmt.Errorf("docker run: empty container id; stderr: %s", strings.TrimSpace(stderr))
+	}
+	// Capture the image's own PATH from a NON-login shell (which honors the image's
+	// ENV PATH). execArgs re-adds it to the login shell so image-installed tools
+	// are found. Best-effort: on failure we fall back to the plain login PATH.
+	if out, _, err := capture("docker", "exec", b.containerID, "sh", "-c", `printf %s "$PATH"`); err == nil {
+		b.basePath = strings.TrimSpace(out)
 	}
 	if err := b.startLoopbackRelays(); err != nil {
 		return err
@@ -110,6 +122,12 @@ func (b *LocalDockerBox) execArgs(cmd string) []string {
 	a := []string{"exec"}
 	if b.Workdir != "" {
 		a = append(a, "-w", containerWorkdir)
+	}
+	// Login shell (-l) so profile.d-installed tools are on PATH; but the login
+	// shell rebuilds PATH from /etc/profile and drops the image's ENV PATH, so we
+	// re-append the captured image PATH (union of both) — no fixture PATH hacks.
+	if b.basePath != "" {
+		cmd = `export PATH="$PATH:` + b.basePath + `"; ` + cmd
 	}
 	return append(a, b.containerID, "sh", "-lc", cmd)
 }
