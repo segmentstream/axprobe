@@ -102,6 +102,7 @@ type Result struct {
 	DurationSec   float64
 	Observations  []Observation
 	FalseErrors   []FalseError
+	PostMortem    string // driver's end-of-run reflection (grounded in the real interface it just exercised)
 	Tokens        llm.Usage
 }
 
@@ -147,7 +148,8 @@ func (d *Driver) Run(ctx context.Context) (*Result, error) {
 		{Role: "user", Content: d.goalPrompt()},
 	}
 
-	for step := 1; step <= maxSteps; step++ {
+	finished := false
+	for step := 1; step <= maxSteps && !finished; step++ {
 		res.Steps = step
 		// Wander nudge: two-thirds through the budget with no observation, gate, or
 		// finish, the agent is likely flailing (poking around without progress).
@@ -190,26 +192,59 @@ func (d *Driver) Run(ctx context.Context) (*Result, error) {
 				Content:    out,
 			})
 			if done {
-				res.finalize()
-				return res, nil
+				finished = true
+				break
 			}
 		}
 	}
 
-	if res.Summary == "" {
-		res.Summary = fmt.Sprintf("Stopped after %d steps without finishing.", maxSteps)
+	if !finished {
+		if res.Summary == "" {
+			res.Summary = fmt.Sprintf("Stopped after %d steps without finishing.", maxSteps)
+		}
+		// A run that exhausts the whole budget without recording anything is itself a
+		// finding — make sure the report carries a signal instead of zero observations.
+		if len(res.Observations) == 0 {
+			res.Observations = append(res.Observations, Observation{
+				Category: "missing_guidance",
+				Note: fmt.Sprintf("Ran the full %d-step budget without reaching the goal, gating, or recording a finding — "+
+					"the tool gave no clear path forward.", maxSteps),
+			})
+		}
 	}
-	// A run that exhausts the whole budget without recording anything is itself a
-	// finding — make sure the report carries a signal instead of zero observations.
-	if len(res.Observations) == 0 {
-		res.Observations = append(res.Observations, Observation{
-			Category: "missing_guidance",
-			Note: fmt.Sprintf("Ran the full %d-step budget without reaching the goal, gating, or recording a finding — "+
-				"the tool gave no clear path forward.", maxSteps),
-		})
-	}
+
+	// Post-mortem: with the tool still fresh in context, have the driver reflect on
+	// its own experience — grounded in the real interface it just exercised. This
+	// lived testimony (not a cold reader's guess) is what the review agent builds
+	// the finding's ideal flow from.
+	res.PostMortem = d.postMortem(ctx, messages, res)
+
 	res.finalize()
 	return res, nil
+}
+
+// postMortem asks the driver, with its full run history still in context, to
+// reflect honestly: what it tried, what was unclear, and the ideal command
+// sequence grounded in the tool's REAL interface (marking anything the tool does
+// not yet offer as PROPOSED). The history already holds the real commands and
+// outputs, so the reflection is grounded by construction.
+func (d *Driver) postMortem(ctx context.Context, history []llm.Message, res *Result) string {
+	prompt := "The run is over. Write a short post-mortem of YOUR experience driving this tool — not a list of commands, but what it was like:\n" +
+		"- what you were trying to do and what you actually did;\n" +
+		"- what was confusing, missing, or forced you to guess;\n" +
+		"- where (if anywhere) you needed a human;\n" +
+		"- the IDEAL sequence of commands that should have reached the goal, grounded in the tool's REAL interface as you observed it — use the actual command and flag names you saw, each as `# why` then `$ command` then `→ result`. Mark any step the tool does NOT yet offer with `# PROPOSED`.\n" +
+		"Be concrete and honest. If the tool worked well, say so briefly."
+	msgs := append(history, llm.Message{Role: "user", Content: prompt})
+	msg, usage, err := d.llm.Chat(ctx, msgs, nil)
+	res.Tokens.PromptTokens += usage.PromptTokens
+	res.Tokens.CompletionTokens += usage.CompletionTokens
+	res.Tokens.TotalTokens += usage.TotalTokens
+	res.Tokens.Cost += usage.Cost
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(msg.Content)
 }
 
 func (d *Driver) goalPrompt() string {

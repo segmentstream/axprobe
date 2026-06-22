@@ -43,6 +43,7 @@ type Report struct {
 	Observations       []driver.Observation `json:"observations"`
 	FalseErrors        []driver.FalseError  `json:"false_errors"`
 	Transcript         []driver.Step        `json:"transcript"`
+	PostMortem         string               `json:"post_mortem,omitempty"`
 	Tokens             Tokens               `json:"tokens"`
 	Summary            string               `json:"summary"`
 }
@@ -63,6 +64,7 @@ func From(scenario string, r *driver.Result) Report {
 		Observations:       nonNilObs(r.Observations),
 		FalseErrors:        nonNilFE(r.FalseErrors),
 		Transcript:         nonNilSteps(r.Transcript),
+		PostMortem:         r.PostMortem,
 		Tokens: Tokens{
 			Prompt:     r.Tokens.PromptTokens,
 			Completion: r.Tokens.CompletionTokens,
@@ -137,6 +139,10 @@ func (r Report) PrintHuman(w io.Writer) {
 	fmt.Fprintln(w)
 	if s := strings.TrimSpace(r.Summary); s != "" {
 		fmt.Fprintf(w, "summary:             %s\n", s)
+	}
+	if pm := strings.TrimSpace(r.PostMortem); pm != "" {
+		fmt.Fprintln(w, "\n── driver post-mortem ──────────────────────")
+		fmt.Fprintln(w, pm)
 	}
 }
 
