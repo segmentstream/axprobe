@@ -116,6 +116,16 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
 	}
 
+	// Validate the workspace config FIRST — it is the foundation, so a broken
+	// config.yaml should surface as the root cause before scenario-level nitpicks
+	// (the axprobe-self run showed an agent fixing scenario fields one by one only
+	// to hit the real config error last). A self-contained scenario (its own box)
+	// does not need it; an absent config is fine (LoadConfig returns nil, nil).
+	cfg, err := LoadConfig(filepath.Join(filepath.Dir(path), ConfigFile))
+	if err != nil {
+		return nil, err
+	}
+
 	if err := checkVersion(path, m.SchemaVersion); err != nil {
 		return nil, err
 	}
@@ -125,15 +135,9 @@ func Load(path string) (*Manifest, error) {
 
 	// Inherit environment + shared credentials from the workspace config unless
 	// the scenario is self-contained (defines its own box).
-	if m.Box.Image == "" {
-		cfg, err := LoadConfig(filepath.Join(filepath.Dir(path), ConfigFile))
-		if err != nil {
-			return nil, err
-		}
-		if cfg != nil {
-			m.Box = cfg.Box
-			m.Credentials = mergeCredentials(cfg.Credentials, m.Credentials)
-		}
+	if m.Box.Image == "" && cfg != nil {
+		m.Box = cfg.Box
+		m.Credentials = mergeCredentials(cfg.Credentials, m.Credentials)
 	}
 
 	if m.Box.Image == "" {

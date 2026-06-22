@@ -46,6 +46,7 @@ Return ONLY a JSON object, no prose:
 {"title":"<the defect in one line, WITHOUT an 'Agentic UX:' prefix>","summary":"<one paragraph>","why_it_matters":["<principle broken + impact>", "..."],"ideal_flow":"<see ideal_flow rules>","request":["<concrete change>", "..."]}
 Rules:
 - ideal_flow is a CONCRETE tool-call transcript — the reader must see exactly what is called and why. Each step: a "# why" comment (one line), the command line ("$ ..."), and the "→ result" the tool would return. Show real command/flag names and realistic results; if a step edits a file, show the key lines. Not prose — a runnable-looking sequence.
+- GROUND the ideal_flow in reality, do not invent the interface. If a "driver post-mortem" is present, build the ideal_flow from it — the driver actually ran the tool and saw its real commands, flags, and outputs. Otherwise use only command/flag names that appear in the transcript. Mark any step that needs a capability the tool does NOT yet offer with "# PROPOSED". Never fabricate a flag, command, or output the run gives no evidence for.
 - TRACE TO COMPLETION, not to the first friction. Identify the wall that actually blocks reaching the GOAL — it is often a step BEYOND where the agent stopped (e.g. the agent fixed the binding but still could not write the transform). Cover every blocking gap, not just the first.
 - NAME THE DEEPEST MISSING CAPABILITY the agent would have needed — including ones it never reached. Ask: to finish, what did it have to know or do that the tool gave no way to (e.g. could it even inspect the data it must transform?).
 - Base everything ONLY on what the transcript shows — do not invent commands the run did not imply.
@@ -66,6 +67,11 @@ func reportContext(r report.Report) string {
 		for _, o := range r.Observations {
 			fmt.Fprintf(&b, "- [%s] %s\n", o.Category, o.Note)
 		}
+	}
+	if pm := strings.TrimSpace(r.PostMortem); pm != "" {
+		b.WriteString("\ndriver post-mortem (the agent's own grounded reflection — build the ideal_flow from THIS, it saw the real interface):\n")
+		b.WriteString(pm)
+		b.WriteString("\n")
 	}
 	return b.String()
 }

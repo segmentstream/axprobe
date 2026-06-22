@@ -145,7 +145,10 @@ A finding is a **GitHub issue in the tool's repo, in English**, framed as
 - **Proposed flow (ideal)** — a CONCRETE tool-call transcript, not prose: each step
   is a `# why` comment, the `$ command`, and the `→ result` it would return (show
   real command/flag names; if a step edits a file, show the key lines). The reader
-  must see exactly what is called and why. (Judgment.)
+  must see exactly what is called and why. **Ground it in reality:** build from the
+  run's `post_mortem` (the driver saw the real interface) or commands the transcript
+  actually shows; mark any not-yet-existing capability `# PROPOSED`; never fabricate
+  a flag or output. (Judgment.)
 - **Request** — concrete, numbered changes.
 - **Context** — "Found via axprobe …".
 

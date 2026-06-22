@@ -116,6 +116,10 @@
         }
       }
     },
+    "post_mortem": {
+      "type": "string",
+      "description": "The driver's end-of-run reflection, grounded in the real interface it just exercised: what it tried, what was unclear, and the ideal command sequence (PROPOSED-marked for capabilities the tool lacks). The basis a review builds the ideal flow from. Omitted if empty."
+    },
     "tokens": {
       "type": "object",
       "additionalProperties": false,
