@@ -52,7 +52,7 @@
     "probes": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Layer 0 scripted commands, run when no --model is given (stand-in for the LLM driver)."
+      "description": "Layer 0 scripted commands, run when no driver model is configured (stand-in for the LLM driver)."
     },
     "expect": {
       "type": "object",

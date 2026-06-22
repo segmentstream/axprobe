@@ -32,8 +32,13 @@ type Manifest struct {
 	StopWhen     string `yaml:"stop_when"`
 	SuccessCheck string `yaml:"success_check"`
 
-	// Probes are scripted commands run when no --model is given (Layer 0).
+	// Probes are scripted commands run when no driver model is given (Layer 0).
 	Probes []string `yaml:"probes"`
+
+	// Defaults are inherited from .axprobe/config.yaml. They are not valid in
+	// scenario YAML; scenarios stay model-agnostic so the same goal can run across
+	// a model matrix.
+	Defaults Defaults `yaml:"-"`
 
 	// Credentials the secret broker may provide when the driver hits a gate.
 	Credentials []Credential `yaml:"credentials"`
@@ -46,6 +51,14 @@ type Manifest struct {
 	// starts from scratch. The box is disposable (in-box files reset for free);
 	// reset covers cross-run state.
 	Reset *Reset `yaml:"reset,omitempty"`
+
+	// Teardown disposes the EXTERNAL side-effects the tool created during the run
+	// — cloud resources that outlive the disposable box (a Turso DB, a GitHub repo,
+	// a deploy). It is the AFTER-phase counterpart to reset's BEFORE-phase: its
+	// commands run IN-BOX (same warm creds/env as the run), in the box's defer
+	// path, so they fire on success, failure, and crash alike — no orphans. Each
+	// fixture that creates real resources declares here how to clean itself up.
+	Teardown *Teardown `yaml:"teardown,omitempty"`
 }
 
 // Reset declares how to clear a fixture's persistent state before a run. Secrets
@@ -56,6 +69,16 @@ type Manifest struct {
 type Reset struct {
 	Secrets bool     `yaml:"secrets,omitempty"`
 	Paths   []string `yaml:"paths,omitempty"`
+}
+
+// Teardown declares how a fixture cleans up the external resources it created.
+// Run is a list of in-box commands executed after the run (in the box's defer
+// path, before the box is brought down) — typically ONE symmetric tool command
+// (e.g. `edenyx agent destroy probe --yes`) that cascades to the underlying
+// infra, NOT a pile of raw provider calls. Commands run unconditionally so a
+// failed run still cleans up; a non-zero teardown command is reported, not fatal.
+type Teardown struct {
+	Run []string `yaml:"run"`
 }
 
 // Expect is a scenario's AX assertions. Pointers/zero distinguish "not asserted".
@@ -72,7 +95,15 @@ type Expect struct {
 type Config struct {
 	SchemaVersion string       `yaml:"schema_version"`
 	Box           BoxSpec      `yaml:"box"`
+	Defaults      Defaults     `yaml:"defaults,omitempty"`
 	Credentials   []Credential `yaml:"credentials"`
+}
+
+// Defaults are repo/workspace-level operator defaults. They are lower precedence
+// than flags/env and higher precedence than ~/.axprobe/config.yaml.
+type Defaults struct {
+	DriverModel string `yaml:"driver_model,omitempty"`
+	ReviewModel string `yaml:"review_model,omitempty"`
 }
 
 // BoxSpec declares the environment and how to get the tool under test into it.
@@ -137,6 +168,7 @@ func Load(path string) (*Manifest, error) {
 	// the scenario is self-contained (defines its own box).
 	if m.Box.Image == "" && cfg != nil {
 		m.Box = cfg.Box
+		m.Defaults = cfg.Defaults
 		m.Credentials = mergeCredentials(cfg.Credentials, m.Credentials)
 	}
 

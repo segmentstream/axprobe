@@ -1,0 +1,7 @@
+schema_version: "1"
+
+box:
+  image: golang:1.22-bookworm
+  setup:
+    - go build -o /usr/local/bin/axprobe .
+

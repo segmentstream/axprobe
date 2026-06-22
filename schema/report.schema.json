@@ -8,7 +8,7 @@
   "required": [
     "schema_version",
     "scenario",
-    "model",
+    "driver_model",
     "outcome",
     "goal_reached",
     "human_interventions",
@@ -26,13 +26,13 @@
     "schema_version": {
       "type": "string",
       "description": "Version of this report contract; bumped on breaking changes so consumers can adapt.",
-      "examples": ["1"]
+      "examples": ["2"]
     },
     "scenario": {
       "type": "string",
       "description": "Manifest name (the test scenario that was run)."
     },
-    "model": {
+    "driver_model": {
       "type": "string",
       "description": "OpenRouter model id that drove the run. Empty for Layer 0 scripted runs."
     },

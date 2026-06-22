@@ -3,16 +3,16 @@
 #   cp config.example.yaml ~/.axprobe/config.yaml
 #
 # These are conveniences only. Precedence (highest first):
-#   --model flag  >  env var  >  this file
-#   driver:  --model            > AXPROBE_MODEL        > model
-#   review:  review --model     > AXPROBE_REVIEW_MODEL > review_model
+#   flag  >  env var  >  .axprobe/config.yaml defaults  >  this file
+#   driver:  --driver-model        > AXPROBE_DRIVER_MODEL > defaults.driver_model > driver_model
+#   review:  review --review-model > AXPROBE_REVIEW_MODEL > defaults.review_model > review_model
 #
-# Model is an operator/runtime choice, so it lives here — NOT in a scenario
+# driver_model is an operator/runtime choice, so it lives here — NOT in a scenario
 # manifest (a scenario should run unchanged across many models).
 
 # The DRIVER model — the agent under measurement. Keep it deliberately weak: if a
 # weak model can drive the tool, the tool's agentic experience is genuinely good.
-model: moonshotai/kimi-k2.6
+driver_model: moonshotai/kimi-k2.6
 
 # The REVIEW (judge) model — turns a run report into a finding. Prefer a STRONGER
 # model than the driver. It never falls back to the driver model: leave it unset

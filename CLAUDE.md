@@ -24,11 +24,11 @@ A clever harness would paper over the defects we want to surface.
 
 ```
 axprobe run <manifest.yaml>                  # Layer 0: scripted probes
-axprobe run --model <openrouter-id> <m.yaml> # Layer 1: LLM driver
+axprobe run --driver-model <openrouter-id> <m.yaml> # Layer 1: LLM driver
 ```
 
-- `--model` set → LLM driver (needs `OPENROUTER_API_KEY`, loaded from `.env` or env).
-- `--model` unset → scripted `probes` from the manifest.
+- `--driver-model` set → LLM driver (needs `OPENROUTER_API_KEY`, loaded from `.env` or env).
+- driver model unset → scripted `probes` from the manifest.
 - The key is never passed on the command line or written into a manifest.
 
 ## The `.axprobe/` convention (two levels)
@@ -60,6 +60,10 @@ Both schemas are strict (`additionalProperties: false`) and require `schema_vers
 ```yaml
 # .axprobe/config.yaml (workspace)
 schema_version: "1"
+# Optional repo-level model defaults; flags/env override them.
+defaults:
+  driver_model: moonshotai/kimi-k2.6
+  review_model: anthropic/claude-opus-4.8
 box:
   image: ubuntu:24.04
   setup: [<string>, ...]   # install the tool under test; a failing step aborts
@@ -182,7 +186,7 @@ Per-run metrics (the report’s schema and the app’s core UX):
 | `duration_seconds` | number | Wall-clock time of the run. | Speed of onboarding. |
 | `observations` | int + list | Recorded friction findings (note + optional suggestion). | The qualitative AX findings. |
 | `false_errors` | int | Non-zero exits that were not real failures (e.g. exit 13/10 on a not-ready state). | Catches the exit-13/10 class of defect automatically. |
-| `model` | string | OpenRouter model id that drove the run. | Cross-model comparison. |
+| `driver_model` | string | OpenRouter model id that drove the run. | Cross-model comparison. |
 | `tokens` / `cost` | int / number | Usage reported by OpenRouter. | Run cost; optional. |
 
 Implementation notes:
@@ -311,9 +315,9 @@ Top-level fields (see the schema file for full descriptions and nested shapes):
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `schema_version` | string | Version of this contract (emitted as `"1"`). |
+| `schema_version` | string | Version of this contract (emitted as `"2"`). |
 | `scenario` | string | Manifest name. |
-| `model` | string | OpenRouter model id (empty for scripted runs). |
+| `driver_model` | string | OpenRouter model id (empty for scripted runs). |
 | `outcome` | enum | `goal_reached` / `stopped_at_gate` / `stuck` / `error`. |
 | `goal_reached` | bool | Goal actually accomplished. |
 | `human_interventions` | int | Count of `gate()` calls (HIC). |
@@ -327,7 +331,7 @@ Top-level fields (see the schema file for full descriptions and nested shapes):
 | `summary` | string | `finish()` recap; may be empty when gated. |
 
 Approved v0: field set, names, types and descriptions are locked; the contract is
-strict (`additionalProperties: false`); `schema_version` is emitted (`"1"`). Any
+strict (`additionalProperties: false`); `schema_version` is emitted (`"2"`). Any
 change is a deliberate, versioned bump of `schema_version`.
 
 ## Conventions

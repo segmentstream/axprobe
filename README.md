@@ -31,6 +31,17 @@ Requires a running **Docker** daemon (Docker Desktop or Colima). Set an
 [OpenRouter key](https://openrouter.ai/keys) via `OPENROUTER_API_KEY` (or a
 gitignored `.env` in the working directory).
 
+Optional driver/review defaults live outside scenarios so the same scenario can
+run across a model matrix:
+
+```yaml
+# ~/.axprobe/config.yaml
+driver_model: moonshotai/kimi-k2.6
+review_model: anthropic/claude-opus-4.8
+```
+
+CI should usually set `AXPROBE_DRIVER_MODEL` or pass `--driver-model` explicitly.
+
 ## Quickstart
 
 ```sh
@@ -38,7 +49,7 @@ gitignored `.env` in the working directory).
 axprobe run testdata/smoke.yaml
 
 # drive a real tool with an agent and get an AX report
-axprobe run --model moonshotai/kimi-k2.6 testdata/gh-device/.axprobe/gh-auth.yaml
+axprobe run --driver-model moonshotai/kimi-k2.6 testdata/gh-device/.axprobe/gh-auth.yaml
 ```
 
 ## Scenarios: the `.axprobe/` convention
