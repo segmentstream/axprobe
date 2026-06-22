@@ -43,6 +43,25 @@ command names.
   plumbing**, not agent-facing. `login_command`, `callback_port`, `token_paths`
   are tool-specific there and that is fine; the agent never sees them.
 
+## Credentials: authorize once, reuse warm
+
+An auth fixture declares `credentials` (with a `login_command` and `token_paths`).
+Don't picture re-authorizing every run — and don't write the fixture as if you
+must:
+
+- The **first** run performs the real browser login. That is a genuine human gate
+  (a human intervention — HIC counts it). axprobe then **caches** the resulting
+  token files in the macOS Keychain, keyed by the login command's base, so related
+  fixtures share the one authorization.
+- **Subsequent** runs **restore** those cached tokens — warm, no login, HIC drops
+  to 0. One manual authorization is reused across every later run.
+- `reset: {secrets: true}` (or `--reset`) **purges** the cached token to force a
+  **cold** run — re-doing the login — e.g. to exercise the from-scratch auth path
+  on purpose.
+- The agent never sees the token; this is harness plumbing.
+
+So: authorize once, then runs are warm; reset only when you want to test cold.
+
 ## Fixture anatomy
 
 ```yaml
