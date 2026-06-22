@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,27 +38,40 @@ import (
 	"github.com/segmentstream/axprobe/internal/version"
 )
 
+// printUsage writes the help text to w. usage() uses it for the error path
+// (stderr, exit 2); the explicit `help`/`--help` path uses it for success.
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "axprobe — drive a CLI in a disposable box and report its Agentic Experience.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "First time? Run `axprobe init` to scaffold a workspace, then edit it and `axprobe run`.")
+	fmt.Fprintln(w, "")
+	fmt.Fprintln(w, "commands:")
+	fmt.Fprintln(w, "  axprobe init")
+	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + an example scenario")
+	fmt.Fprintln(w, "  axprobe run [--model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
+	fmt.Fprintln(w, "      with no argument, runs every .axprobe/*.yaml in the current directory")
+	fmt.Fprintln(w, "      --workdir mounts a persistent project (live journey); --reset starts cold")
+	fmt.Fprintln(w, "  axprobe explore --model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
+	fmt.Fprintln(w, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
+	fmt.Fprintln(w, "  axprobe probe [--image <img>] <command> [<command>...]")
+	fmt.Fprintln(w, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
+	fmt.Fprintln(w, "  axprobe lint [--strict] [<scenario-name>]")
+	fmt.Fprintln(w, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
+	fmt.Fprintln(w, "  axprobe skill [--install]")
+	fmt.Fprintln(w, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
+	fmt.Fprintln(w, "  axprobe review [--model <id>] <report.json>")
+	fmt.Fprintln(w, "      AX-review a run report into a paste-ready finding draft (does not file)")
+	fmt.Fprintln(w, "  axprobe key set")
+	fmt.Fprintln(w, "      store your OpenRouter API key in the Keychain (read from stdin)")
+	fmt.Fprintln(w, "  axprobe update [--check]")
+	fmt.Fprintln(w, "      update an install.sh-installed binary to the latest GitHub release")
+	fmt.Fprintln(w, "  axprobe version")
+	fmt.Fprintln(w, "      print the build version")
+}
+
+// usage is the error path: a misuse prints help to stderr and exits non-zero.
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  axprobe run [--model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
-	fmt.Fprintln(os.Stderr, "      with no argument, runs every .axprobe/*.yaml in the current directory")
-	fmt.Fprintln(os.Stderr, "      --workdir mounts a persistent project (live journey); --reset starts cold")
-	fmt.Fprintln(os.Stderr, "  axprobe explore --model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
-	fmt.Fprintln(os.Stderr, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
-	fmt.Fprintln(os.Stderr, "  axprobe probe [--image <img>] <command> [<command>...]")
-	fmt.Fprintln(os.Stderr, "      run command(s) in a clean box (install from .axprobe/config.yaml); no LLM")
-	fmt.Fprintln(os.Stderr, "  axprobe lint [--strict] [<scenario-name>]")
-	fmt.Fprintln(os.Stderr, "      warn if a scenario goal leaks tool-interface detail (prefer user intent)")
-	fmt.Fprintln(os.Stderr, "  axprobe skill [--install]")
-	fmt.Fprintln(os.Stderr, "      print the axprobe-author skill (rubric), or install it under .claude/skills/")
-	fmt.Fprintln(os.Stderr, "  axprobe review [--model <id>] <report.json>")
-	fmt.Fprintln(os.Stderr, "      AX-review a run report into a paste-ready finding draft (does not file)")
-	fmt.Fprintln(os.Stderr, "  axprobe key set")
-	fmt.Fprintln(os.Stderr, "      store your OpenRouter API key in the Keychain (read from stdin)")
-	fmt.Fprintln(os.Stderr, "  axprobe update [--check]")
-	fmt.Fprintln(os.Stderr, "      update an install.sh-installed binary to the latest GitHub release")
-	fmt.Fprintln(os.Stderr, "  axprobe version")
-	fmt.Fprintln(os.Stderr, "      print the build version")
+	printUsage(os.Stderr)
 	os.Exit(2)
 }
 
@@ -81,6 +95,12 @@ func main() {
 		usage()
 	}
 	switch os.Args[1] {
+	case "help", "--help", "-h":
+		// Explicit help is success, not a usage error: print to stdout, exit 0.
+		printUsage(os.Stdout)
+		os.Exit(0)
+	case "init":
+		initMain()
 	case "run":
 		runMain()
 	case "explore":
@@ -123,6 +143,63 @@ func updateMain() {
 		os.Exit(1)
 	}
 }
+
+// initMain scaffolds a workspace so a new user never has to reverse-engineer the
+// schema (the axprobe-self run showed an agent binary-grepping for it): it writes
+// .axprobe/config.yaml (the install recipe) and an example scenario, refusing to
+// clobber anything that already exists.
+func initMain() {
+	dir := ".axprobe"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+		os.Exit(1)
+	}
+	wrote := false
+	write := func(name, body string) {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			fmt.Printf("• %s already exists, left as-is\n", p)
+			return
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ wrote %s\n", p)
+		wrote = true
+	}
+	write(manifest.ConfigFile, configScaffold)
+	write("example.yaml", exampleScaffold)
+	if wrote {
+		fmt.Println("\nNext:")
+		fmt.Println("  1. edit .axprobe/config.yaml — set box.image and the setup commands that install your tool")
+		fmt.Println("  2. write your goal in .axprobe/example.yaml (or: axprobe explore --model <id> \"<intent>\")")
+		fmt.Println("  3. axprobe lint example          # check the goal reads as user intent")
+		fmt.Println("  4. axprobe run example --model <id>")
+	}
+}
+
+const configScaffold = `schema_version: "1"
+# The workspace: how to install the tool under test in a fresh, disposable box.
+box:
+  image: ubuntu:24.04
+  setup:
+    # Commands that install your CLI in the box. For example:
+    # - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    # - curl -fsSL https://example.com/install.sh | sh
+`
+
+const exampleScaffold = `schema_version: "1"
+name: example
+# The goal is the USER's intent in plain language — never the tool's own commands
+# or flags. The agent must discover HOW from the tool itself; that discovery is
+# the agentic experience under test. Run ` + "`axprobe lint example`" + ` to check it.
+goal: <what does the user want to accomplish? e.g. "connect my data warehouse and confirm it actually works">
+expect:
+  goal_reached: true
+  max_human_interventions: 1
+  max_false_errors: 0
+`
 
 // keyMain stores a named app key in the Keychain (axprobe/app/<name>), read from
 // stdin so it never lands in argv or shell history. The name defaults to
@@ -558,7 +635,8 @@ func exploreCmd(intent, model, name, workdir string) error {
 		return err
 	}
 	if cfg == nil {
-		return fmt.Errorf("explore needs .axprobe/%s (the workspace install)", manifest.ConfigFile)
+		return fmt.Errorf("no workspace found: .axprobe/%s is missing (it defines how to install the tool under test).\n"+
+			"Run `axprobe init` to scaffold one, then set box.image and the setup commands.", manifest.ConfigFile)
 	}
 	if name == "" {
 		name = slug(intent)
