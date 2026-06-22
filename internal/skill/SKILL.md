@@ -68,6 +68,30 @@ Don't hand-write YAML. Give `explore` a user-level intent; it drives the tool in
 the sandbox and synthesizes a correct-by-construction manifest (plumbing
 separated, schema valid), then lints the goal. Review the draft before committing.
 
+## Development loop
+
+A fixture is an executable spec, so it belongs in your edit loop. After you change
+the tool under test (a command, a flag, help text, output, an error), close the
+loop on AX before you move on:
+
+1. **Regression** — `axprobe run <scenario>` for the scenarios that exercise the
+   surface you touched. They re-drive the agent against the known goal and turn red
+   if the change made the tool harder to operate. This catches *regressions on paths
+   you already chose to measure*.
+2. **Discovery** — if you changed the **interface** (renamed a command, reshaped a
+   flag/output, altered the guidance the agent reads), `axprobe explore "<fresh user
+   intent>"` drives a brand-new plain-language intent through the box and synthesizes
+   a scenario. This surfaces *new* friction your existing fixtures can't see, because
+   they were written against the old interface and ask only their old questions.
+3. **Red → fix** — a red run or fresh friction is a finding: file it (human-gated) or
+   fix the tool, then re-run until green.
+
+**run vs explore** — `run` is regression on a *known* scenario (did AX hold?);
+`explore` is discovery of *new* friction after an interface change (what does the
+new surface trip on?). Run alone tells you the old goals still pass; it cannot tell
+you the rename you just shipped confuses a first-time agent. After an interface
+change, do both.
+
 ## Watching a run
 
 Launch in the background with a JSONL event stream and tail it — reliable to parse,
