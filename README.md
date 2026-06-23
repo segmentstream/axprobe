@@ -50,8 +50,8 @@ CI should usually set `AXPROBE_DRIVER_MODEL` or pass `--driver-model` explicitly
 ## Quickstart
 
 ```sh
-# scripted smoke test (no key needed) — proves the box plumbing
-axprobe run testdata/smoke.yaml
+# sanity-check the box plumbing (no key needed) — run a command in a clean box
+axprobe probe --image ubuntu:24.04 "echo hello from inside the box"
 
 # drive a real tool with an agent and get an AX report
 axprobe run --driver-model moonshotai/kimi-k2.6 testdata/gh-device/.axprobe/gh-auth.yaml

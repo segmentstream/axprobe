@@ -4,6 +4,20 @@
 # agent must discover how a test is authored and checked from the tool alone.
 schema_version: "1"
 name: onboarding
+
+# Self-contained box (installs RELEASED axprobe, no source mount needed) so this
+# scenario is portable and does NOT depend on the root config.yaml, which builds
+# axprobe from a mounted Go checkout (that's only for init-from-scratch, run with
+# --workdir .). Keeping onboarding's own box decouples it from that mount.
+box:
+  image: ubuntu:24.04
+  setup:
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates git
+    # Install the latest released axprobe exactly as any user would.
+    - curl -fsSL https://github.com/segmentstream/axprobe/releases/latest/download/install.sh | sh
+    # install.sh drops the binary in $HOME/.axprobe/bin (not on PATH in a fresh box).
+    - echo 'export PATH="$HOME/.axprobe/bin:$HOME/.local/bin:$PATH"' > /etc/profile.d/axprobe.sh
+
 goal: You want to start measuring how easily an AI agent can operate a
   command-line tool, using axprobe (already installed on this machine). Figure
   out how an axprobe test is authored, write a first test for a simple CLI of

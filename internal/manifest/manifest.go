@@ -32,9 +32,6 @@ type Manifest struct {
 	StopWhen     string `yaml:"stop_when"`
 	SuccessCheck string `yaml:"success_check"`
 
-	// Probes are scripted commands run when no driver model is given (Layer 0).
-	Probes []string `yaml:"probes"`
-
 	// Defaults are inherited from .axprobe/config.yaml. They are not valid in
 	// scenario YAML; scenarios stay model-agnostic so the same goal can run across
 	// a model matrix.
@@ -145,6 +142,17 @@ func Load(path string) (*Manifest, error) {
 	var m Manifest
 	if err := yaml.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest %s: %w", path, err)
+	}
+
+	// `probes:` (scripted Layer-0 commands) was removed — axprobe manifests are
+	// LLM-driven (a `goal:` a driver pursues). Reject the key explicitly so an old
+	// fixture, or an agent that writes `probes:`, gets a clear migration error
+	// instead of a silently ignored field.
+	var legacy struct {
+		Probes []string `yaml:"probes"`
+	}
+	if yaml.Unmarshal(data, &legacy) == nil && len(legacy.Probes) > 0 {
+		return nil, fmt.Errorf("manifest %s: `probes:` is no longer supported — axprobe drives an LLM against a `goal:`; move a deterministic check to a unit test, or run commands ad hoc with `axprobe probe`", path)
 	}
 
 	// Validate the workspace config FIRST — it is the foundation, so a broken

@@ -43,12 +43,18 @@ func TestCheckWorkdirSecretsIgnoresTemplates(t *testing.T) {
 	}
 }
 
-func TestCmdRunRejectsSetupOnlyScenario(t *testing.T) {
+// A run with no driver model resolvable (no flag, env, or config default) must
+// fail fast with a clear message — before any box startup — naming the ways to
+// set one. Isolate HOME and env so no machine-level default leaks in.
+func TestCmdRunRequiresDriverModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AXPROBE_DRIVER_MODEL", "")
+
 	wd := t.TempDir()
-	manifest := filepath.Join(wd, "setup-only.yaml")
+	manifest := filepath.Join(wd, "scenario.yaml")
 	if err := os.WriteFile(manifest, []byte(`schema_version: "1"
-name: setup-only
-goal: This would only run setup.
+name: no-model
+goal: Do a thing.
 box:
   image: ubuntu:24.04
 `), 0o644); err != nil {
@@ -57,9 +63,9 @@ box:
 
 	err := cmdRun(manifest, "", "", false, "", false)
 	if err == nil {
-		t.Fatal("expected setup-only scenario to fail before box startup")
+		t.Fatal("expected a run with no driver model to fail before box startup")
 	}
-	if got := err.Error(); !strings.Contains(got, "this would only run setup") {
+	if got := err.Error(); !strings.Contains(got, "no driver model") {
 		t.Fatalf("unexpected error: %s", got)
 	}
 }

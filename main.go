@@ -1,11 +1,10 @@
 // Command axprobe drives a CLI tool inside a disposable box and reports on the
 // experience.
 //
-//	axprobe run <manifest.yaml>                 # Layer 0: scripted probes
-//	axprobe run --driver-model <id> <manifest.yaml>    # Layer 1: LLM driver via OpenRouter
+//	axprobe run <manifest.yaml>    # drive the LLM agent against the manifest's goal
 //
-// Both share the same box and manifest; only the "driver" differs. The LLM
-// driver needs OPENROUTER_API_KEY in the environment.
+// The LLM driver needs OPENROUTER_API_KEY in the environment (or the Keychain via
+// `axprobe key set`) and a driver model (--driver-model or a configured default).
 package main
 
 import (
@@ -542,30 +541,22 @@ func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, w
 		return err
 	}
 	driverModel := config.ResolveDriverModel(driverModelFlag, m.Defaults.DriverModel)
-
-	if driverModel == "" && len(m.Probes) == 0 {
-		return fmt.Errorf("no driver model configured and manifest %q has no probes: this would only run setup\n  set --driver-model, AXPROBE_DRIVER_MODEL, .axprobe/config.yaml:defaults.driver_model, or ~/.axprobe/config.yaml:driver_model", m.Name)
+	if driverModel == "" {
+		return fmt.Errorf("no driver model configured for %q: set --driver-model, AXPROBE_DRIVER_MODEL, .axprobe/config.yaml:defaults.driver_model, or ~/.axprobe/config.yaml:driver_model", m.Name)
 	}
 
 	// Build the LLM client up front so a missing key fails before we spin up a box
 	// and run setup.
-	var client *llm.Client
-	if driverModel != "" {
-		client, err = llm.New(driverModel)
-		if err != nil {
-			return err
-		}
+	client, err := llm.New(driverModel)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("▸ scenario: %s\n", m.Name)
 	if m.Goal != "" {
 		fmt.Printf("▸ goal:     %s\n", m.Goal)
 	}
-	if driverModel != "" {
-		fmt.Printf("▸ driver:   llm (%s)\n", driverModel)
-	} else {
-		fmt.Printf("▸ driver:   scripted probes\n")
-	}
+	fmt.Printf("▸ driver:   llm (%s)\n", driverModel)
 
 	// Clear the scenario's own declared outputs in the workdir before the run, so
 	// it starts from scratch (a from-scratch authoring fixture). Host-side, guarded.
@@ -587,10 +578,7 @@ func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, w
 		defer runTeardown(b, m.Teardown)
 	}
 
-	if client == nil {
-		return runProbes(b, m) // Layer 0
-	}
-	return runDriver(b, m, client, reportPath, unattended, reset) // Layer 1
+	return runDriver(b, m, client, reportPath, unattended, reset)
 }
 
 // clearWorkdirPaths removes the scenario's declared outputs, each resolved
@@ -781,22 +769,6 @@ func slug(s string) string {
 		return "scenario"
 	}
 	return out
-}
-
-// runProbes is the Layer 0 stand-in driver: a fixed list of commands.
-func runProbes(b box.Box, m *manifest.Manifest) error {
-	for _, p := range m.Probes {
-		fmt.Printf("▸ probe:    %s\n", p)
-		res, err := b.Exec(p)
-		if err != nil {
-			return err
-		}
-		printResult(res)
-		if res.ExitCode != 0 {
-			return fmt.Errorf("probe failed (exit %d): %s", res.ExitCode, p)
-		}
-	}
-	return nil
 }
 
 // emitReport builds the AX report from a drive, prints the human summary, and

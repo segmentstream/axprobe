@@ -15,20 +15,22 @@ A clever harness would paper over the defects we want to surface.
 | `main.go` | CLI entry + run orchestration (scripted vs LLM driver) + AX report printing |
 | `internal/manifest` | Parses `test.yaml`. All product-specifics live here; the harness knows nothing about any specific tool. |
 | `internal/box` | `Box` interface + `LocalDockerBox`. Disposable, from-scratch environment. |
-| `internal/driver` | Layer 1 LLM driver: agent loop, tool definitions, AX-rubric system prompt. |
+| `internal/driver` | LLM driver: agent loop, tool definitions, AX-rubric system prompt. |
 | `internal/llm` | Minimal OpenRouter client (OpenAI-compatible chat + tool calling). |
 | `internal/dotenv` | Loads a gitignored `.env` (e.g. `OPENROUTER_API_KEY`) at startup. |
-| `testdata/` | `smoke.yaml` (plumbing proof) + `bigquery-cli-onboarding.yaml` (scenario #1). |
+| `testdata/` | per-tool scenario fixtures (e.g. `gh-device/`, `segmentstream/`). |
 
 ## CLI
 
 ```
-axprobe run <manifest.yaml>                  # Layer 0: scripted probes
-axprobe run --driver-model <openrouter-id> <m.yaml> # Layer 1: LLM driver
+axprobe run <manifest.yaml>                          # drive the LLM agent at the goal
+axprobe run --driver-model <openrouter-id> <m.yaml>  # pick the driver model explicitly
+axprobe probe "<cmd>" ["<cmd>"...]                   # run command(s) in a clean box, no LLM
 ```
 
-- `--driver-model` set → LLM driver (needs `OPENROUTER_API_KEY`, loaded from `.env` or env).
-- driver model unset → scripted `probes` from the manifest.
+- `run` always drives an LLM agent: it needs a driver model (`--driver-model`,
+  `AXPROBE_DRIVER_MODEL`, or a configured default) and `OPENROUTER_API_KEY`
+  (from `.env`, env, or the Keychain via `axprobe key set`).
 - The key is never passed on the command line or written into a manifest.
 
 ## The `.axprobe/` convention (two levels)
@@ -75,7 +77,6 @@ intent: <string>           # plain-language source; `explore` derives the rest
 goal: <string>             # what the driver pursues (often derived from intent)
 stop_when: <string>
 success_check: <string>
-probes: [<string>, ...]    # Layer 0 scripted commands
 credentials:               # Layer 3 secret broker (scenario-specific)
   - name: <string>
     kind: file | value
