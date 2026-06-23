@@ -215,6 +215,10 @@ const configScaffold = `schema_version: "1"
 
 box:
   image: ubuntu:24.04
+  # Testing a prebuilt binary? Copy it straight in (mode is preserved, so it stays
+  # executable) — no need to mount your whole project with --workdir:
+  # copy:
+  #   - ./dist/mytool:/usr/local/bin/mytool   # <host-path>:<box-path>
   setup:
     # Commands that install your CLI in the box. For example:
     # - apt-get update -qq && apt-get install -y -qq curl ca-certificates
@@ -677,6 +681,20 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 		fmt.Println("▸ box down")
 		if err := b.Down(); err != nil {
 			fmt.Fprintf(os.Stderr, "  warning: teardown failed: %v\n", err)
+		}
+	}
+	// Copy: inject declared host files into the box before setup runs (e.g. a
+	// prebuilt binary). Mode is preserved, so an executable stays executable.
+	for _, spec := range m.Box.Copy {
+		host, dest, ok := strings.Cut(spec, ":")
+		if !ok || host == "" || dest == "" {
+			teardown()
+			return nil, nil, fmt.Errorf("box.copy %q: want \"<host-path>:<box-path>\"", spec)
+		}
+		fmt.Printf("▸ copy:     %s → %s\n", host, dest)
+		if err := b.CopyFileIn(host, dest); err != nil {
+			teardown()
+			return nil, nil, fmt.Errorf("box.copy %q: %w", spec, err)
 		}
 	}
 	// Setup: how the tool under test gets into the box. A failed step aborts.

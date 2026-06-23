@@ -105,7 +105,12 @@ type Defaults struct {
 
 // BoxSpec declares the environment and how to get the tool under test into it.
 type BoxSpec struct {
-	Image string   `yaml:"image"`
+	Image string `yaml:"image"`
+	// Copy injects host files into the box (before setup runs): each entry is
+	// "<host-path>:<box-path>". File mode is preserved, so a compiled binary stays
+	// executable — the blessed way to test a prebuilt binary without mounting the
+	// whole project with --workdir.
+	Copy  []string `yaml:"copy"`
 	Setup []string `yaml:"setup"`
 }
 

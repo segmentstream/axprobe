@@ -224,6 +224,26 @@ func (b *LocalDockerBox) ArchiveIn(data []byte) error {
 // CopyIn writes content to destPath inside the container via `docker cp`, after
 // ensuring the parent directory exists. Content is staged in a host temp file so
 // it never appears on a command line.
+// CopyFileIn copies a host file into the box at destPath, preserving its mode
+// (so a compiled binary stays executable). This is box.copy — getting a prebuilt
+// tool into the box without mounting the whole project.
+func (b *LocalDockerBox) CopyFileIn(hostPath, destPath string) error {
+	if b.containerID == "" {
+		return fmt.Errorf("box is not up")
+	}
+	if _, err := os.Stat(hostPath); err != nil {
+		return fmt.Errorf("host file %q: %w", hostPath, err)
+	}
+	if _, stderr, err := capture("docker", "exec", b.containerID, "mkdir", "-p", path.Dir(destPath)); err != nil {
+		return fmt.Errorf("mkdir in box: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	// docker cp preserves the source file's mode, including the executable bit.
+	if _, stderr, err := capture("docker", "cp", hostPath, b.containerID+":"+destPath); err != nil {
+		return fmt.Errorf("docker cp: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
 func (b *LocalDockerBox) CopyIn(content []byte, destPath string) error {
 	if b.containerID == "" {
 		return fmt.Errorf("box is not up")

@@ -68,6 +68,7 @@ defaults:
   review_model: anthropic/claude-opus-4.8
 box:
   image: ubuntu:24.04
+  copy:  [<host>:<box>, ...]  # inject host files before setup (mode preserved); ship a prebuilt binary without --workdir
   setup: [<string>, ...]   # install the tool under test; a failing step aborts
 
 # .axprobe/<scenario>.yaml (scenario — box inherited from config.yaml)
