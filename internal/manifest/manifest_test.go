@@ -38,6 +38,26 @@ probes:
 	}
 }
 
+// box.copy parses into BoxSpec.Copy so a prebuilt binary can be injected without
+// mounting the project.
+func TestLoadParsesBoxCopy(t *testing.T) {
+	p := writeManifest(t, `schema_version: "1"
+name: with-copy
+box:
+  image: ubuntu:24.04
+  copy:
+    - ./dist/mytool:/usr/local/bin/mytool
+goal: do a thing
+`)
+	m, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(m.Box.Copy) != 1 || m.Box.Copy[0] != "./dist/mytool:/usr/local/bin/mytool" {
+		t.Fatalf("box.copy not parsed: %#v", m.Box.Copy)
+	}
+}
+
 // A normal LLM-driven manifest (a goal, no probes) still loads cleanly — guards
 // against the rejection being too broad.
 func TestLoadAcceptsGoalManifest(t *testing.T) {
