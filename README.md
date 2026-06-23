@@ -57,6 +57,10 @@ axprobe probe --image ubuntu:24.04 "echo hello from inside the box"
 axprobe run --driver-model moonshotai/kimi-k2.6 testdata/gh-device/.axprobe/gh-auth.yaml
 ```
 
+Run reports are written to `~/.axprobe/runs/<run-id>/report.json` by default so
+the product repo stays clean. Pass `--report <path>` to export a report to a
+specific file, for example when publishing a CI artifact or sharing a repro.
+
 ## Scenarios: the `.axprobe/` convention
 
 A repo under test keeps its scenarios in `.axprobe/`, split into two levels so the
@@ -80,6 +84,20 @@ expect:                 # the AX bar — the run fails (non-zero exit) if missed
 
 - `axprobe run` (no arg) discovers and runs every `.axprobe/*.yaml`.
 - `axprobe run <name>` runs `.axprobe/<name>.yaml`.
+- `--workdir <dir>` mounts a live project so a run can continue real local state.
+  Without `--workdir`, a scenario may declare `workspace.template` and axprobe
+  copies that `.axprobe`-local fixture into a temp workspace for the run.
+
+```yaml
+# .axprobe/onboarding.yaml
+workspace:
+  template: fixtures/empty-project
+```
+
+The template path is relative to the scenario manifest and may not escape that
+directory, so committed fixtures should live next to manifests under
+`.axprobe/fixtures/`. Use `--keep-workspace` to keep the copied temp workspace
+after a run for debugging.
 
 Because `expect` makes a run pass/fail, a scenario is an **executable spec**: write
 it before the feature (red), implement until green, and a regression turns it red.

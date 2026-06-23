@@ -40,6 +40,11 @@ type Manifest struct {
 	// Credentials the secret broker may provide when the driver hits a gate.
 	Credentials []Credential `yaml:"credentials"`
 
+	// Workspace describes a reproducible project workspace for the scenario. The
+	// template lives beside the manifest (usually under .axprobe/fixtures) and is
+	// copied into a temp dir when --workdir is not supplied.
+	Workspace *Workspace `yaml:"workspace,omitempty"`
+
 	// Expect is the AX bar (the PM-owned "definition of done"). When set, the run
 	// passes only if the result meets it; otherwise axprobe exits non-zero (CI gate).
 	Expect *Expect `yaml:"expect,omitempty"`
@@ -60,12 +65,18 @@ type Manifest struct {
 
 // Reset declares how to clear a fixture's persistent state before a run. Secrets
 // purges this scenario's cached credentials so an auth fixture runs cold. Paths
-// are workdir-relative outputs the scenario itself generates (e.g. sources/vercel)
-// — removed before the run so it authors from scratch. The whole workdir is never
-// wiped (it is the user's repo); only declared, in-workdir paths are cleared.
+// are workspace-relative outputs the scenario itself generates (e.g. sources/vercel)
+// — removed before the run so it authors from scratch. The whole workspace is
+// never wiped; only declared paths inside it are cleared.
 type Reset struct {
 	Secrets bool     `yaml:"secrets,omitempty"`
 	Paths   []string `yaml:"paths,omitempty"`
+}
+
+// Workspace declares a fixture-backed project workspace for deterministic runs.
+// Template is a directory path relative to the scenario manifest directory.
+type Workspace struct {
+	Template string `yaml:"template,omitempty"`
 }
 
 // Teardown declares how a fixture cleans up the external resources it created.

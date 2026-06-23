@@ -32,6 +32,17 @@
       "type": "string",
       "description": "Command/assertion describing success. Informational for now."
     },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional reproducible project workspace. Used only when --workdir is not supplied; paths are relative to this scenario manifest directory, so fixtures can live under .axprobe/fixtures/.",
+      "properties": {
+        "template": {
+          "type": "string",
+          "description": "Directory to copy into a temp workspace before the run, relative to the scenario manifest directory, e.g. fixtures/empty-project."
+        }
+      }
+    },
     "box": {
       "type": "object",
       "additionalProperties": false,
@@ -68,10 +79,10 @@
     "reset": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Return the fixture to a clean baseline BEFORE the run. The box is disposable; the whole mounted workdir is never wiped (it is the user's repo) — only the declared paths are.",
+      "description": "Return the fixture to a clean baseline BEFORE the run. The box is disposable; the whole active workspace is never wiped — only the declared paths are.",
       "properties": {
         "secrets": { "type": "boolean", "description": "Purge this scenario's cached credentials (Keychain) so an auth fixture runs cold instead of restoring a token." },
-        "paths": { "type": "array", "items": { "type": "string" }, "description": "Workdir-relative outputs the scenario itself generates (e.g. sources/vercel); removed before the run so it starts from scratch. Must stay inside --workdir." }
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "Workspace-relative outputs the scenario itself generates (e.g. sources/vercel); removed before the run so it starts from scratch. Must stay inside the active workspace." }
       }
     },
     "credentials": {

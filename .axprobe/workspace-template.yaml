@@ -1,0 +1,60 @@
+# axprobe-on-axprobe: measure whether a scenario can carry its own reproducible
+# project workspace fixture, without requiring the user to mount the whole repo.
+# The fixture lives beside this manifest under .axprobe/fixtures/ and axprobe
+# copies it into a temp workspace before the box starts.
+schema_version: "1"
+name: workspace-template
+
+workspace:
+  template: fixtures/workspace-template
+
+box:
+  image: ubuntu:24.04
+  setup:
+    # These checks fail before the agent starts if workspace.template was not
+    # copied and mounted as the active workspace.
+    - test -f /workspace/seed.txt
+    - test -d /workspace/app
+    # The product workspace must not expose axprobe's own control plane.
+    - test ! -e /workspace/.axprobe
+    - |
+      cat > /usr/local/bin/workspace-check <<'EOF'
+      #!/bin/sh
+      set -eu
+      case "${1:-}" in
+        status)
+          test -f /workspace/seed.txt
+          test -d /workspace/app
+          test ! -e /workspace/.axprobe
+          printf "workspace fixture is mounted and isolated\n"
+          ;;
+        write-proof)
+          mkdir -p /workspace/run-output
+          printf "fixture workspace copy is writable\n" > /workspace/run-output/proof.txt
+          printf "/workspace/run-output/proof.txt\n"
+          ;;
+        help|--help|-h)
+          printf "workspace-check status       verify the fixture workspace is mounted and isolated\n"
+          printf "workspace-check write-proof  create /workspace/run-output/proof.txt in the writable fixture copy\n"
+          ;;
+        *)
+          printf "usage: workspace-check {status|write-proof}\n" >&2
+          exit 2
+          ;;
+      esac
+      EOF
+    - chmod +x /usr/local/bin/workspace-check
+
+goal: You have been given a prepared project workspace. Use the installed
+  workspace-check command to confirm the project fixture is present and isolated,
+  then write a proof file in the writable workspace copy. Finish when both
+  workspace-check status and workspace-check write-proof succeed, and the
+  workspace does not expose a .axprobe control directory.
+
+stop_when: workspace-check status and workspace-check write-proof have both
+  exited successfully, and /workspace/.axprobe is absent.
+
+expect:
+  goal_reached: true
+  max_human_interventions: 0
+  max_false_errors: 0

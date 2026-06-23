@@ -50,9 +50,9 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  axprobe init [--name <scenario>]")
 	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + a starter scenario")
-	fmt.Fprintln(w, "  axprobe run [--driver-model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
+	fmt.Fprintln(w, "  axprobe run [--driver-model <id>] [--report <path>] [--workdir <dir>] [--keep-workspace] [--reset] [<manifest.yaml> | <scenario-name>]")
 	fmt.Fprintln(w, "      with no argument, runs every .axprobe/*.yaml in the current directory")
-	fmt.Fprintln(w, "      --workdir mounts a persistent project (live journey); --reset starts cold")
+	fmt.Fprintln(w, "      --workdir mounts a persistent project; otherwise workspace.template is copied from .axprobe/fixtures into a temp workspace")
 	fmt.Fprintln(w, "  axprobe explore --driver-model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
 	fmt.Fprintln(w, "      drive a plain-language intent once and synthesize .axprobe/<name>.yaml")
 	fmt.Fprintln(w, "  axprobe probe [--image <img>] <command> [<command>...]")
@@ -448,10 +448,11 @@ func probeCmd(commands []string, image string) error {
 func runMain() {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	driverModel := fs.String("driver-model", "", "OpenRouter model id for the LLM driver (e.g. moonshotai/kimi-k2.6). Falls back to AXPROBE_DRIVER_MODEL, repo defaults, then user defaults. If configured, use the LLM driver instead of scripted probes.")
-	reportPath := fs.String("report", "", "Path to write the JSON AX report (default <scenario>.report.json for LLM runs).")
+	reportPath := fs.String("report", "", "Path to write the JSON AX report (default ~/.axprobe/runs/<run-id>/report.json for LLM runs).")
 	unattended := fs.Bool("unattended", false, "No interactive gates: satisfy oauth from a cached/provisioned token or end stopped_at_gate (for CI).")
-	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = disposable.")
-	reset := fs.Bool("reset", false, "Start cold: purge this scenario's cached credentials before the run (does not touch --workdir).")
+	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = use workspace.template if declared; otherwise disposable.")
+	keepWorkspace := fs.Bool("keep-workspace", false, "Keep the temp fixture workspace after the run (only when using workspace.template without --workdir).")
+	reset := fs.Bool("reset", false, "Start cold: purge this scenario's cached credentials before the run (does not wipe the workspace).")
 	eventsPath := fs.String("events", "", "Write a JSONL event stream here, watchable via `tail -f | jq` (login_url, bash, gate, observe, outcome…).")
 	pos := parsePositionals(fs, os.Args[2:])
 	openEvents(*eventsPath)
@@ -474,7 +475,7 @@ func runMain() {
 		if len(manifests) > 1 {
 			rp = ""
 		}
-		if err := cmdRun(mp, *driverModel, rp, *unattended, *workdir, *reset); err != nil {
+		if err := cmdRun(mp, *driverModel, rp, *unattended, *workdir, *keepWorkspace, *reset); err != nil {
 			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 			failed = true
 		}
@@ -560,7 +561,7 @@ func filterOut(items []string, drop string) []string {
 	return out
 }
 
-func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, workdir string, reset bool) error {
+func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, workdir string, keepWorkspace bool, reset bool) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
 		return err
@@ -583,13 +584,19 @@ func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, w
 	}
 	fmt.Printf("▸ driver:   llm (%s)\n", driverModel)
 
+	runWorkdir, cleanupWorkspace, err := prepareWorkspace(manifestPath, m, workdir, keepWorkspace)
+	if err != nil {
+		return err
+	}
+	defer cleanupWorkspace()
+
 	// Clear the scenario's own declared outputs in the workdir before the run, so
 	// it starts from scratch (a from-scratch authoring fixture). Host-side, guarded.
-	if m.Reset != nil && len(m.Reset.Paths) > 0 && workdir != "" {
-		clearWorkdirPaths(workdir, m.Reset.Paths)
+	if m.Reset != nil && len(m.Reset.Paths) > 0 && runWorkdir != "" {
+		clearWorkspacePaths(runWorkdir, m.Reset.Paths)
 	}
 
-	b, boxDown, err := bringUp(m, workdir)
+	b, boxDown, err := bringUp(m, runWorkdir)
 	if err != nil {
 		return err
 	}
@@ -606,18 +613,19 @@ func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, w
 	return runDriver(b, m, client, reportPath, unattended, reset)
 }
 
-// clearWorkdirPaths removes the scenario's declared outputs, each resolved
-// relative to the workdir and refused if it would escape it — so reset clears
-// only what the scenario generates, never the user's broader repo.
-func clearWorkdirPaths(workdir string, paths []string) {
-	wabs, err := filepath.Abs(workdir)
+// clearWorkspacePaths removes the scenario's declared outputs, each resolved
+// relative to the active workspace and refused if it would escape it — so reset
+// clears only what the scenario generates, never the user's broader repo or the
+// immutable fixture template.
+func clearWorkspacePaths(workspace string, paths []string) {
+	wabs, err := filepath.Abs(workspace)
 	if err != nil {
 		return
 	}
 	for _, p := range paths {
 		target := filepath.Clean(filepath.Join(wabs, p))
 		if target == wabs || !strings.HasPrefix(target, wabs+string(os.PathSeparator)) {
-			fmt.Printf("⚠ reset:    skipping %q (escapes --workdir)\n", p)
+			fmt.Printf("⚠ reset:    skipping %q (escapes workspace)\n", p)
 			continue
 		}
 		if err := os.RemoveAll(target); err != nil {
@@ -626,6 +634,111 @@ func clearWorkdirPaths(workdir string, paths []string) {
 		}
 		fmt.Printf("▸ reset:    cleared %s\n", p)
 	}
+}
+
+func prepareWorkspace(manifestPath string, m *manifest.Manifest, workdir string, keep bool) (string, func(), error) {
+	if workdir != "" {
+		fmt.Printf("▸ workspace: live %s\n", workdir)
+		return workdir, func() {}, nil
+	}
+	if m.Workspace == nil || strings.TrimSpace(m.Workspace.Template) == "" {
+		return "", func() {}, nil
+	}
+	template, err := resolveWorkspaceTemplate(manifestPath, m.Workspace.Template)
+	if err != nil {
+		return "", nil, err
+	}
+	parent, err := workspaceTempParent()
+	if err != nil {
+		return "", nil, err
+	}
+	tmp, err := os.MkdirTemp(parent, "workspace-"+slug(m.Name)+"-")
+	if err != nil {
+		return "", nil, err
+	}
+	if err := copyDir(template, tmp); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", nil, err
+	}
+	fmt.Printf("▸ workspace: fixture %s -> %s\n", m.Workspace.Template, tmp)
+	if keep {
+		fmt.Printf("▸ workspace: keeping %s\n", tmp)
+		return tmp, func() {}, nil
+	}
+	return tmp, func() {
+		if err := os.RemoveAll(tmp); err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: cleanup workspace %q: %v\n", tmp, err)
+		}
+	}, nil
+}
+
+func workspaceTempParent() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, ".axprobe", "tmp")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func resolveWorkspaceTemplate(manifestPath, template string) (string, error) {
+	if filepath.IsAbs(template) {
+		return "", fmt.Errorf("workspace.template must be relative to the scenario manifest directory: %s", template)
+	}
+	base, err := filepath.Abs(filepath.Dir(manifestPath))
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Clean(filepath.Join(base, template))
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("workspace.template %q must stay inside the scenario manifest directory", template)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", fmt.Errorf("workspace.template %q: %w", template, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workspace.template %q must be a directory", template)
+	}
+	return target, nil
+}
+
+func copyDir(src, dst string) error {
+	src = filepath.Clean(src)
+	return filepath.Walk(src, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("workspace.template contains unsupported non-regular file: %s", path)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
 
 // runTeardown executes a fixture's declared cleanup commands in the box, after
@@ -667,12 +780,12 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 	}
 	ports = append(ports, extraPorts...)
 	if workdir != "" {
-		if err := checkWorkdirSecrets(workdir); err != nil {
+		if err := checkWorkspaceSecrets(workdir); err != nil {
 			return nil, nil, err
 		}
 	}
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
-	b.Workdir = workdir // live journey: mount the real project; "" = disposable
+	b.Workdir = workdir // mount the active workspace; "" = disposable
 	fmt.Printf("▸ box up:   %s\n", m.Box.Image)
 	if err := b.Up(); err != nil {
 		return nil, nil, err
@@ -821,7 +934,12 @@ func emitReport(name string, res *driver.Result, reportPath string) report.Repor
 	rep := report.From(name, res)
 	rep.PrintHuman(os.Stdout)
 	if reportPath == "" {
-		reportPath = name + ".report.json"
+		var err error
+		reportPath, err = defaultReportPath(name)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warning: could not choose default report path: %v\n", err)
+			return rep
+		}
 	}
 	if err := rep.WriteJSON(reportPath); err != nil {
 		fmt.Fprintf(os.Stderr, "  warning: could not write report: %v\n", err)
@@ -829,6 +947,19 @@ func emitReport(name string, res *driver.Result, reportPath string) report.Repor
 		fmt.Printf("\n▸ report:   %s\n", reportPath)
 	}
 	return rep
+}
+
+func defaultReportPath(name string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	runID := time.Now().UTC().Format("20060102T150405Z") + "-" + slug(name)
+	dir := filepath.Join(home, ".axprobe", "runs", runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "report.json"), nil
 }
 
 // runDriver is the Layer 1 LLM driver. It collects the approved metrics and
@@ -879,12 +1010,12 @@ func openEvents(path string) {
 	events.SetOutput(f)
 }
 
-// checkWorkdirSecrets REFUSES to mount a workdir holding secret-looking files: a
-// --workdir bind-mount makes everything in it readable by the sandboxed agent,
-// and a deliberately-dumb agent does read them (a prompt prohibition is not
-// reliable — observed live). Warning was not enough; we abort. Override with
+// checkWorkspaceSecrets REFUSES to mount a workspace holding secret-looking files:
+// a bind-mount makes everything in it readable by the sandboxed agent, and a
+// deliberately-dumb agent does read them (a prompt prohibition is not reliable
+// — observed live). Warning was not enough; we abort. Override with
 // AXPROBE_ALLOW_WORKDIR_SECRETS=1 if you accept the exposure.
-func checkWorkdirSecrets(workdir string) error {
+func checkWorkspaceSecrets(workdir string) error {
 	var hits []string
 	for _, pat := range []string{".env", ".env.*", "*.pem", "*credential*.json", "*key*.json", "*secret*"} {
 		m, _ := filepath.Glob(filepath.Join(workdir, pat))
@@ -900,10 +1031,10 @@ func checkWorkdirSecrets(workdir string) error {
 		return nil
 	}
 	if os.Getenv("AXPROBE_ALLOW_WORKDIR_SECRETS") != "" {
-		fmt.Printf("⚠ --workdir has secret-looking files (%s); proceeding (AXPROBE_ALLOW_WORKDIR_SECRETS set)\n", strings.Join(hits, ", "))
+		fmt.Printf("⚠ workspace has secret-looking files (%s); proceeding (AXPROBE_ALLOW_WORKDIR_SECRETS set)\n", strings.Join(hits, ", "))
 		return nil
 	}
-	return fmt.Errorf("refusing to mount --workdir — it holds secret-looking files the sandboxed agent could read: %s\n"+
+	return fmt.Errorf("refusing to mount workspace — it holds secret-looking files the sandboxed agent could read: %s\n"+
 		"  move them out (axprobe's key belongs in the Keychain via `axprobe key set`), or set AXPROBE_ALLOW_WORKDIR_SECRETS=1 to override",
 		strings.Join(hits, ", "))
 }
