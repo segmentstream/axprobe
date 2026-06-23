@@ -1,0 +1,53 @@
+# axprobe-on-axprobe: measure how well axprobe guides an agent through the first
+# practical hurdle of testing a PREBUILT binary — getting that executable into the
+# fresh, empty box. The blessed answer is `box.copy` (a host:box file copy that
+# preserves mode); the AX under test is whether the agent discovers and uses it
+# from the tool's own guidance, instead of reaching for the heavyweight --workdir
+# whole-project mount (or giving up).
+#
+# Authored via `axprobe explore` (the goal below is its distilled, user-level form)
+# after a first explore run ended stuck — surfacing that axprobe had no binary
+# injection path at all. `box.copy` was added in response; this scenario guards it.
+#
+# --- Honest caveats (read before trusting a green run) ---
+#
+# (a) IN-BOX axprobe IS BUILT FROM main. box.copy is newer than the latest release,
+#     so this box clones + builds axprobe from source (not the release installer),
+#     ensuring the in-box scaffold actually hints `box.copy`. No --workdir needed.
+#
+# (b) DOCKER-IN-DOCKER. axprobe drives its tool inside a disposable box and cannot
+#     bring up a real nested box inside this box. So the VERIFY step (`axprobe run`
+#     against the injected binary) cannot complete here. The goal therefore stops
+#     at "authored a well-formed test", not "ran it" — what we measure is that the
+#     agent injects the binary via box.copy and reaches a lint-clean scenario. A
+#     real run of that scenario on a normal host (real Docker daemon) closes the
+#     loop; the reviewer confirms box.copy use from the transcript.
+schema_version: "1"
+name: binary-inject
+
+box:
+  image: golang:1.22-bookworm
+  setup:
+    # Build the in-box axprobe from main so its scaffold knows `box.copy`.
+    - git clone --depth 1 https://github.com/segmentstream/axprobe /src
+    - cd /src && go build -o /usr/local/bin/axprobe .
+    # A "prebuilt binary" target for the agent to inject: a single executable not
+    # available from any package manager.
+    - printf '#!/bin/sh\necho mytool-v1 ran\n' > /root/mytool && chmod +x /root/mytool
+
+intent: >-
+  You have a prebuilt command-line program at /root/mytool — a single executable
+  file, not available from any package manager. Set up axprobe to test it: get your
+  executable into axprobe's fresh test box so a scenario can invoke it, then author
+  and validate a first test for it.
+goal: >-
+  Your standalone executable is available inside an isolated test environment, and
+  you have authored a first automated test for it that is confirmed well-formed and
+  ready to run.
+
+# The AX bar: the agent gets the binary into the box and reaches a lint-clean
+# scenario from the tool's own guidance — no human gate, no confusing errors.
+expect:
+  goal_reached: true
+  max_human_interventions: 0
+  max_false_errors: 0
