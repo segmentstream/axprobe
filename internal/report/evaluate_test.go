@@ -43,7 +43,7 @@ func TestEvaluateFails(t *testing.T) {
 
 func TestRenderFindingProducesPublicSafeIssue(t *testing.T) {
 	rep := Report{
-		Scenario:           "vercel-source",
+		Scenario:           "aurora-source",
 		DriverModel:        "moonshotai/kimi-k2.6",
 		Outcome:            "stuck",
 		GoalReached:        false,
@@ -54,24 +54,32 @@ func TestRenderFindingProducesPublicSafeIssue(t *testing.T) {
 	out := RenderFinding(
 		rep,
 		"Agentic UX: source authoring needs query",
-		"Report vercel-source in /Users/alice/project/vercel-source.report.json got stuck on the vercel source and requested arbitrary SQL against `segmentstream-ai-website.segmentstream_1774442186472.vercel_logs` using moonshotai/kimi-k2.6.",
-		"The agent tried `.axprobe/vercel-source.yaml`, read /private/tmp/run.json, queried segmentstream-ai-website/segmentstream_1774442186472/vercel_logs, showed \"{\\\"path\\\":\\\"/home\\\",\\\"referrer\\\":\\\"https://example.com\\\"}\", and guessed keys like \"path\", \"referrer\".",
-		[]string{"self-sufficiency: sources/vercel needed real rows from segmentstream-ai-website.segmentstream_1774442186472.vercel_logs"},
-		"$ segmentstream warehouse query --sql \"select * from `segmentstream-ai-website.segmentstream_1774442186472.vercel_logs` limit 5\" --json",
-		[]string{"Use /Users/alice/.config/key.json only through configured credentials."},
+		"Report aurora-source in /Users/alice/project/aurora-source.report.json got stuck on the aurora source and requested arbitrary SQL against `acme-project.raw_events.clicks` using moonshotai/kimi-k2.6.",
+		"The agent tried `.axprobe/aurora-source.yaml`, read /private/tmp/run.json, queried acme-project/raw_events/clicks, showed \"{\\\"path\\\":\\\"/home\\\",\\\"referrer\\\":\\\"https://example.com\\\"}\", and guessed keys like \"path\", \"referrer\".",
+		"$ example-cli data query --sql \"select * from `acme-project.raw_events.clicks` limit 5\" --json\n→ Referenced resource was not found in configured location US",
+		[]string{"self-sufficiency: sources/aurora needed real rows from acme-project.raw_events.clicks"},
+		"$ example-cli data query --sql \"select * from `acme-project.raw_events.clicks` limit 5\" --json\n# Edit model source named aurora_raw and placeholder <aurora-logs-table>",
+		RequestItems{{
+			Change: "Update SCAFFOLD_GUIDE.md with instructions for /Users/alice/.config/key.json.",
+			Why:    "The agent needs machine-readable recovery guidance instead of reading /Users/alice/project docs.",
+		}},
 	)
 
 	mustContain := []string{
-		"Title: [AXprobe] Agentic UX: source authoring needs query",
+		"Title: [AXprobe] source authoring needs query",
+		"## Failed Transcript",
+		"## Desired Transcript",
 		"<scenario>",
 		"<local-path>",
-		"`<warehouse-table>`",
-		"<warehouse-table>",
+		"`<external-resource>`",
+		"<external-resource>",
 		"sources/<source-name>",
 		"<driver-model>",
 		"read-only SELECT SQL",
 		`"<sample-payload>"`,
 		"keys like <json-key>",
+		"Do not generate docs or markdown",
+		"Why: The agent needs machine-readable recovery guidance",
 		"Reported from an AXprobe agentic experience review.",
 	}
 	for _, want := range mustContain {
@@ -81,14 +89,18 @@ func TestRenderFindingProducesPublicSafeIssue(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		"vercel-source",
+		"aurora-source",
 		"/Users/alice",
 		"/private/tmp",
-		"vercel",
-		"segmentstream-ai-website",
-		"segmentstream_1774442186472",
+		"aurora",
+		"aurora_raw",
+		"<source-name>-logs-table",
+		"<<source-name>",
+		"acme-project",
+		"raw_events",
 		"moonshotai/kimi-k2.6",
 		"arbitrary SQL",
+		"SCAFFOLD_GUIDE.md",
 		"/home",
 		"example.com",
 	}

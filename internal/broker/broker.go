@@ -45,11 +45,25 @@ func New(m *manifest.Manifest, b box.Box, store *secrets.Store, unattended bool,
 	}
 }
 
-// Prime restores any cached oauth tokens into the box before the run starts, so
-// the tool is already authenticated and the agent never needs to log in.
+// Prime restores any WARM credential into the box before the run starts, so the
+// tool is already provisioned and the agent never has to gate for plumbing it
+// already has: a cached oauth token is restored (no login), and a cached
+// value/file credential is injected at its env/box_path. Only genuinely missing
+// (uncached) credentials remain gate-driven — so a fully warm run is HIC 0.
 func (br *Broker) Prime() {
 	for _, c := range br.creds {
-		if c.Kind == "oauth" && br.restoreToken(c) {
+		if c.Kind == "oauth" {
+			if br.restoreToken(c) {
+				br.provided[c.Name] = true
+			}
+			continue
+		}
+		// value/file: pre-inject when cached, so the box starts fully wired.
+		if v, ok := br.store.Get(c.Name); ok {
+			if err := br.inject(c, v); err != nil {
+				fmt.Fprintf(br.out, "  warning: prime %q: %v\n", c.Name, err)
+				continue
+			}
 			br.provided[c.Name] = true
 		}
 	}

@@ -49,6 +49,67 @@ type Report struct {
 	Summary            string               `json:"summary"`
 }
 
+// RequestItem is one public issue request plus the AX rationale for it.
+type RequestItem struct {
+	Change string `json:"change"`
+	Why    string `json:"why,omitempty"`
+}
+
+// RequestItems accepts both the current review-agent shape:
+//
+//	[{"change":"...", "why":"..."}]
+//
+// and the older shape:
+//
+//	["..."]
+//
+// so older review-model responses still render.
+type RequestItems []RequestItem
+
+func (items *RequestItems) UnmarshalJSON(data []byte) error {
+	var objects []struct {
+		Change    string `json:"change"`
+		Why       string `json:"why"`
+		Request   string `json:"request"`
+		Rationale string `json:"rationale"`
+	}
+	if err := json.Unmarshal(data, &objects); err == nil {
+		out := make([]RequestItem, 0, len(objects))
+		for _, obj := range objects {
+			change := strings.TrimSpace(firstNonEmpty(obj.Change, obj.Request))
+			why := strings.TrimSpace(firstNonEmpty(obj.Why, obj.Rationale))
+			if change == "" && why == "" {
+				continue
+			}
+			out = append(out, RequestItem{Change: change, Why: why})
+		}
+		*items = out
+		return nil
+	}
+
+	var lines []string
+	if err := json.Unmarshal(data, &lines); err != nil {
+		return err
+	}
+	out := make([]RequestItem, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, RequestItem{Change: line})
+		}
+	}
+	*items = out
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // From builds a Report from a run result.
 func From(scenario string, r *driver.Result) Report {
 	return Report{
@@ -203,12 +264,19 @@ func ObservedBlock(r Report) string {
 // raw transcript verbatim; that made good private diagnostics but poor public
 // issues. Keep the public issue sanitized by default and iterate review quality
 // from here as real AXprobe findings teach us better patterns.
-func RenderFinding(r Report, title, summary, observed string, why []string, ideal string, request []string) string {
+func RenderFinding(r Report, title, summary, observed, failedTranscript string, why []string, desiredTranscript string, request RequestItems) string {
 	var b strings.Builder
 	title = sanitizePublicText(stripTitlePrefixes(title), r)
-	fmt.Fprintf(&b, "Title: [AXprobe] Agentic UX: %s\n\n", title)
+	fmt.Fprintf(&b, "Title: [AXprobe] %s\n\n", title)
 	fmt.Fprintf(&b, "## Summary\n%s\n\n", sanitizePublicText(summary, r))
 	fmt.Fprintf(&b, "## Observed\n%s\n", sanitizedObserved(r, observed))
+
+	b.WriteString("\n## Failed Transcript\n")
+	if strings.TrimSpace(failedTranscript) == "" {
+		b.WriteString("_TODO (operator): the minimal sanitized command/output excerpt proving the failure._\n")
+	} else {
+		b.WriteString(strings.TrimRight(sanitizePublicText(failedTranscript, r), "\n") + "\n")
+	}
 
 	b.WriteString("\n## Why it matters (Agentic Experience)\n")
 	if len(why) == 0 {
@@ -219,11 +287,11 @@ func RenderFinding(r Report, title, summary, observed string, why []string, idea
 		}
 	}
 
-	b.WriteString("\n## Desired Flow\n")
-	if strings.TrimSpace(ideal) == "" {
+	b.WriteString("\n## Desired Transcript\n")
+	if strings.TrimSpace(desiredTranscript) == "" {
 		b.WriteString("_TODO (operator): the ideal transcript — what the interaction should look like._\n")
 	} else {
-		b.WriteString(strings.TrimRight(sanitizePublicText(ideal, r), "\n") + "\n")
+		b.WriteString(strings.TrimRight(sanitizePublicText(desiredTranscript, r), "\n") + "\n")
 	}
 
 	b.WriteString("\n## Request\n")
@@ -231,7 +299,14 @@ func RenderFinding(r Report, title, summary, observed string, why []string, idea
 		b.WriteString("_TODO (operator): concrete, numbered changes._\n")
 	} else {
 		for i, rq := range request {
-			fmt.Fprintf(&b, "%d. %s\n", i+1, sanitizePublicText(rq, r))
+			change := sanitizeRequestText(rq.Change, r)
+			if strings.TrimSpace(change) == "" {
+				change = "_TODO (operator): concrete change._"
+			}
+			fmt.Fprintf(&b, "%d. %s\n", i+1, change)
+			if rationale := strings.TrimSpace(sanitizePublicText(rq.Why, r)); rationale != "" {
+				fmt.Fprintf(&b, "   Why: %s\n", rationale)
+			}
 		}
 	}
 
@@ -239,8 +314,8 @@ func RenderFinding(r Report, title, summary, observed string, why []string, idea
 	return b.String()
 }
 
-// Draft is the no-LLM finding: real Observed + observations as why-it-matters,
-// with ideal flow and request scaffolded for the operator to complete.
+// Draft is the no-LLM finding: sanitized run shape + observations as
+// why-it-matters, with transcript/request sections scaffolded for the operator.
 func Draft(r Report) string {
 	why := make([]string, 0, len(r.Observations))
 	for _, o := range r.Observations {
@@ -250,7 +325,7 @@ func Draft(r Report) string {
 	if strings.TrimSpace(summary) == "" {
 		summary = "The agent could not complete the goal — see the transcript below."
 	}
-	return RenderFinding(r, draftTitle(r), summary, "", why, "", nil)
+	return RenderFinding(r, draftTitle(r), summary, "", "", why, "", nil)
 }
 
 func draftTitle(r Report) string {
@@ -295,17 +370,20 @@ func sanitizedObserved(r Report, observed string) string {
 }
 
 var (
-	localPathRE      = regexp.MustCompile(`(?m)(/Users/[^\s'"` + "`" + `]+|/private/tmp/[^\s'"` + "`" + `]+|/tmp/[^\s'"` + "`" + `]+)`)
-	bigQueryQuotedRE = regexp.MustCompile("`[A-Za-z][A-Za-z0-9_-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*`")
-	bigQueryBareRE   = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_\-]*\.[A-Za-z_][A-Za-z0-9_\-]*\b`)
-	bigQuerySlashRE  = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*/[A-Za-z_][A-Za-z0-9_\-]*/[A-Za-z_][A-Za-z0-9_\-]*\b`)
-	sourcePackageRE  = regexp.MustCompile(`\bsources/[A-Za-z0-9_-]+\b`)
-	reportPathRE     = regexp.MustCompile(`\b[A-Za-z0-9_.-]+\.report\.json\b`)
-	credentialPathRE = regexp.MustCompile(`(?i)\b[A-Za-z0-9_.-]*(credential|credentials|token|secret|key)[A-Za-z0-9_.-]*\.json\b`)
-	manifestPathRE   = regexp.MustCompile(`\B\.axprobe/[A-Za-z0-9_.-]+\.ya?ml\b`)
-	arbitrarySQLRE   = regexp.MustCompile(`(?i)\barbitrary SQL\b`)
-	escapedPayloadRE = regexp.MustCompile(`"\{\\?"[A-Za-z0-9_.-]+\\?":[^\n]*?\\?\}"`)
-	keysLikeRE       = regexp.MustCompile(`(?i)keys like\s+"[^"]+"(?:\s*,\s*"[^"]+")*`)
+	localPathRE                 = regexp.MustCompile(`(?m)(/Users/[^\s'"` + "`" + `]+|/private/tmp/[^\s'"` + "`" + `]+|/tmp/[^\s'"` + "`" + `]+)`)
+	threePartQuotedIdentifierRE = regexp.MustCompile("`[A-Za-z][A-Za-z0-9_-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*\\.[A-Za-z_][A-Za-z0-9_\\-]*`")
+	threePartBareIdentifierRE   = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_\-]*\.[A-Za-z_][A-Za-z0-9_\-]*\b`)
+	threePartSlashIdentifierRE  = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*/[A-Za-z_][A-Za-z0-9_\-]*/[A-Za-z_][A-Za-z0-9_\-]*\b`)
+	sourcePackageRE             = regexp.MustCompile(`\bsources/[A-Za-z0-9_-]+\b`)
+	reportPathRE                = regexp.MustCompile(`\b[A-Za-z0-9_.-]+\.report\.json\b`)
+	credentialPathRE            = regexp.MustCompile(`(?i)\b[A-Za-z0-9_.-]*(credential|credentials|token|secret|key)[A-Za-z0-9_.-]*\.json\b`)
+	manifestPathRE              = regexp.MustCompile(`\B\.axprobe/[A-Za-z0-9_.-]+\.ya?ml\b`)
+	arbitrarySQLRE              = regexp.MustCompile(`(?i)\barbitrary SQL\b`)
+	escapedPayloadRE            = regexp.MustCompile(`"\{\\?"[A-Za-z0-9_.-]+\\?":[^\n]*?\\?\}"`)
+	keysLikeRE                  = regexp.MustCompile(`(?i)keys like\s+"[^"]+"(?:\s*,\s*"[^"]+")*`)
+	generatedDocsRE             = regexp.MustCompile(`(?i)(\b[A-Za-z0-9_.-]+\.md\b|\bdocs/)`)
+	sourceSuffixRE              = regexp.MustCompile(`<source-name>[-_][A-Za-z0-9_-]+`)
+	doubleSourceRE              = regexp.MustCompile(`<<source-name>>`)
 )
 
 func sanitizePublicText(s string, r Report) string {
@@ -314,9 +392,9 @@ func sanitizePublicText(s string, r Report) string {
 		return s
 	}
 	s = localPathRE.ReplaceAllString(s, "<local-path>")
-	s = bigQueryQuotedRE.ReplaceAllString(s, "`<warehouse-table>`")
-	s = bigQueryBareRE.ReplaceAllString(s, "<warehouse-table>")
-	s = bigQuerySlashRE.ReplaceAllString(s, "<warehouse-table>")
+	s = threePartQuotedIdentifierRE.ReplaceAllString(s, "`<external-resource>`")
+	s = threePartBareIdentifierRE.ReplaceAllString(s, "<external-resource>")
+	s = threePartSlashIdentifierRE.ReplaceAllString(s, "<external-resource>")
 	s = sourcePackageRE.ReplaceAllString(s, "sources/<source-name>")
 	s = reportPathRE.ReplaceAllString(s, "<report.json>")
 	s = credentialPathRE.ReplaceAllString(s, "<credential-file>")
@@ -331,8 +409,21 @@ func sanitizePublicText(s string, r Report) string {
 		s = strings.ReplaceAll(s, r.DriverModel, "<driver-model>")
 	}
 	for _, term := range scenarioPrivateTerms(r.Scenario) {
-		re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(term) + `\b`)
+		re := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(term))
 		s = re.ReplaceAllString(s, "<source-name>")
+	}
+	s = sourceSuffixRE.ReplaceAllString(s, "<source-name>")
+	s = doubleSourceRE.ReplaceAllString(s, "<source-name>")
+	return s
+}
+
+func sanitizeRequestText(s string, r Report) string {
+	s = sanitizePublicText(s, r)
+	// Keep this product-agnostic: generated docs/markdown can be an AX smell for
+	// any manifest-tested tool, but the core reviewer must not know specific
+	// tools or filenames beyond the generic docs/markdown pattern.
+	if generatedDocsRE.MatchString(s) {
+		return "Do not generate docs or markdown as the scaffold's agent-facing guidance; move source-authoring guidance into structured CLI outputs, generated implementation files, next_actions, and diagnostics."
 	}
 	return s
 }
@@ -342,29 +433,27 @@ func scenarioPrivateTerms(scenario string) []string {
 		return r == '-' || r == '_' || r == '.' || r == '/'
 	})
 	generic := map[string]bool{
-		"":              true,
-		"adapter":       true,
-		"agent":         true,
-		"axprobe":       true,
-		"cli":           true,
-		"custom":        true,
-		"event":         true,
-		"events":        true,
-		"flow":          true,
-		"harness":       true,
-		"init":          true,
-		"integration":   true,
-		"manifest":      true,
-		"project":       true,
-		"review":        true,
-		"run":           true,
-		"scenario":      true,
-		"segmentstream": true,
-		"smoke":         true,
-		"source":        true,
-		"test":          true,
-		"tool":          true,
-		"warehouse":     true,
+		"":            true,
+		"adapter":     true,
+		"agent":       true,
+		"axprobe":     true,
+		"cli":         true,
+		"custom":      true,
+		"event":       true,
+		"events":      true,
+		"flow":        true,
+		"harness":     true,
+		"init":        true,
+		"integration": true,
+		"manifest":    true,
+		"project":     true,
+		"review":      true,
+		"run":         true,
+		"scenario":    true,
+		"smoke":       true,
+		"source":      true,
+		"test":        true,
+		"tool":        true,
 	}
 	var terms []string
 	for _, p := range parts {

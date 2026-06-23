@@ -17,14 +17,18 @@ to surface. Your job as author is to give it an honest test, not to help it.
 
 ## The one rule: the goal is USER intent, never the tool's interface
 
+AXprobe is manifest-agnostic: it tests whichever tool the manifest installs and
+exposes. Do not assume product, vendor, backend, or domain behavior that is not
+present in the manifest, transcript, or run report.
+
 The `goal` (and the `explore` intent it is synthesized from) must read like a
 user describing what they want — **not** like instructions to the tool. If you
 name the tool's own commands, flags, internal response states, or transport
 mechanics, you stop testing whether the tool guides the agent and start
 spoon-feeding it.
 
-- ❌ "run `warehouse configure`, then `warehouse test` until it returns `ready:true`, using `--port 8085` over the OAuth loopback"
-- ✅ "Connect my BigQuery to segmentstream using my Google account, into project X, a dataset called Y in the US region. Make sure it actually works — data can be read and written — not just that it's saved."
+- ❌ "run `tool configure`, then `tool test` until it returns `ready:true`, using `--port 8085` over the OAuth loopback"
+- ✅ "Connect the tool to my account, use the project and storage location I provided, and make sure the connection actually works — data can be read and written — not just that settings were saved."
 
 The agent must discover *how* (which commands, what "done" looks like) from the
 tool itself. That discovery **is** the AX under test. Run `axprobe lint <scenario>`
@@ -168,10 +172,31 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 - **Non-zero exit on a normal state** (a "false error")?
 - **More steps than necessary** to reach the goal?
 - **Mutations without `--dry-run`/confirmation** — the agent can change real state
-  with no guardrail. (Example finding: segmentstream-cli #19.)
+  with no guardrail.
 - Did the agent have to **ask a human** for something the tool could have
   discovered itself?
 - Does the tool **ship/embed its own agent guidance**? (An AX criterion in itself.)
+- **Preserve upstream errors, add context.** Do not ask tools to translate every
+  provider error; prefer raw/provider error plus known state and recovery
+  affordances when the tool has enough deterministic context. If an upstream
+  error appears in the failure, the desired output should preserve it rather than
+  hide it behind a custom message.
+- **Scaffold returns machine-actionable state.** A scaffold/generate/create-package
+  response should report created files, unresolved implementation surfaces,
+  verification command, and contract summary when applicable. Avoid tutorial-style
+  `next_steps` and generated docs/markdown as the agent interface; do not request
+  keeping generated docs "in addition to" structured output unless documentation
+  itself was the user's goal.
+- **Do not invent unproven fixes.** Ask only for missing capabilities proven by
+  the transcript. Do not ask for project/account/workspace override flags when the
+  failing command already identifies the external resource fully; ask for the
+  setting that actually blocked the operation.
+- Does the tool expose structured state and then fail to use it downstream? If a
+  command discovers a resource location, ID, auth state, or next action, later
+  commands should consume it or return diagnostics that connect the dots.
+- Do config names match the domain model when ambiguity is proven? Ask for more
+  specific names only when the transcript shows one generic term being used for
+  different scopes and that ambiguity contributes to the failure.
 
 ## Decide vs ask the product owner
 
@@ -185,20 +210,23 @@ how the human gets asked fewer questions over time.
 ## Finding format
 
 A finding is a **public-safe GitHub issue draft in the tool's repo, in English**,
-framed as *AXprobe Agentic UX*:
+framed with an AXprobe issue-list prefix:
 
-- **Title** — `[AXprobe] Agentic UX: <the defect in one line>`
+- **Title** — `[AXprobe] <the defect in one line>`
 - **Summary** — one paragraph: what is wrong.
 - **Observed** — a sanitized account of what the harness tried and where it got
   stuck. Include minimal command examples, but use placeholders for private
-  identifiers: `<source-name>`, `<warehouse-table>`, `<local-path>`,
+  identifiers: `<source-name>`, `<external-resource>`, `<local-path>`,
   `<credential-file>`, etc. Do **not** include manifest paths, local paths,
   report paths, project IDs, dataset/table names, credential paths, raw payload
   values, tokens, or secrets.
+- **Failed Transcript** — a short public-safe transcript excerpt proving the wall:
+  the command/output that failed, plus the immediately preceding command if it
+  revealed state the failing command should have used.
 - **Why it matters (Agentic Experience)** — which principle(s) it breaks
   (self-sufficiency, honest-state, discover-don't-ask, …) and the impact (HIC,
   stuck, a misleading success signal).
-- **Desired Flow** — a CONCRETE tool-call transcript, not prose: each step
+- **Desired Transcript** — a CONCRETE tool-call transcript, not prose: each step
   is a `# why` comment, the `$ command`, and the `→ result` it would return (show
   real command/flag names; if a step edits a file, show the key lines). The reader
   must see exactly what is called and why. **Ground it in reality:** build from the
@@ -206,7 +234,9 @@ framed as *AXprobe Agentic UX*:
   actually shows; mark any not-yet-existing capability `# PROPOSED`; never fabricate
   a flag or output. Keep this public-safe too: placeholders instead of private
   identifiers and no raw data. (Judgment.)
-- **Request** — concrete, numbered changes.
+- **Request** — concrete, numbered changes. Each item should include the change
+  and a short rationale explaining how it improves the desired transcript or
+  removes the observed AX failure. Do not just restate the change.
 - **Attribution footer** — generated by the renderer:
   `Reported from an AXprobe agentic experience review.`
 
@@ -219,8 +249,8 @@ filed in third-party or open-source repositories.
 
 Drafting a finding is automatic — `axprobe review [--review-model <id>] <report.json>`
 renders a paste-ready public issue draft (with --review-model an LLM reviewer
-guided by this skill writes the sanitized observed section, why, desired flow,
-and request).
+guided by this skill writes the sanitized observed section, failed transcript,
+why, desired transcript, and request rationale).
 **Filing** it is an external, public action on a shared system, so it stays in the
 "ask" bucket (decide-vs-ask category 2): show the product owner the FULL rendered
 draft and get approval BEFORE filing — not just the intent or a summary. The owner
