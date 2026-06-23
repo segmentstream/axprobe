@@ -43,11 +43,13 @@ import (
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "axprobe — drive a CLI in a disposable box and report its Agentic Experience.")
 	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "First time? Run `axprobe init` to scaffold a workspace, then edit it and `axprobe run`.")
+	fmt.Fprintln(w, "First time? Two ways to author a scenario:")
+	fmt.Fprintln(w, "  • fastest — let an agent draft it for you:  axprobe explore --driver-model <id> \"<intent>\"")
+	fmt.Fprintln(w, "  • by hand — scaffold then edit:             axprobe init  →  edit .axprobe/  →  axprobe run")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "commands:")
-	fmt.Fprintln(w, "  axprobe init")
-	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + an example scenario")
+	fmt.Fprintln(w, "  axprobe init [--name <scenario>]")
+	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + a starter scenario")
 	fmt.Fprintln(w, "  axprobe run [--driver-model <id>] [--report <path>] [--workdir <dir>] [--reset] [<manifest.yaml> | <scenario-name>]")
 	fmt.Fprintln(w, "      with no argument, runs every .axprobe/*.yaml in the current directory")
 	fmt.Fprintln(w, "      --workdir mounts a persistent project (live journey); --reset starts cold")
@@ -163,6 +165,14 @@ func updateMain() {
 // .axprobe/config.yaml (the install recipe) and an example scenario, refusing to
 // clobber anything that already exists.
 func initMain() {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	// --name makes the scaffolded filename match the scenario from the start, so
+	// the `name:` field and the file lint/run look up by never drift apart (an
+	// agent renamed the field but not the file, then `lint <name>` 404'd).
+	name := fs.String("name", "example", "scenario name; also the scaffolded file .axprobe/<name>.yaml")
+	_ = fs.Parse(os.Args[2:])
+	scenario := *name
+
 	dir := ".axprobe"
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
@@ -183,13 +193,15 @@ func initMain() {
 		wrote = true
 	}
 	write(manifest.ConfigFile, configScaffold)
-	write("example.yaml", exampleScaffold)
+	write(scenario+".yaml", scenarioScaffold(scenario))
 	if wrote {
-		fmt.Println("\nNext:")
+		fmt.Println("\nNext — fastest is to let an agent draft the scenario for you:")
+		fmt.Println("  axprobe explore --driver-model <id> \"<intent>\"   # drives once, synthesizes the scenario")
+		fmt.Println("\nOr author it by hand:")
 		fmt.Println("  1. edit .axprobe/config.yaml — set box.image and the setup commands that install your tool")
-		fmt.Println("  2. write your goal in .axprobe/example.yaml (or: axprobe explore --driver-model <id> \"<intent>\")")
-		fmt.Println("  3. axprobe lint example          # check the goal reads as user intent")
-		fmt.Println("  4. axprobe run example --driver-model <id>")
+		fmt.Printf("  2. write your goal in .axprobe/%s.yaml\n", scenario)
+		fmt.Printf("  3. axprobe lint %s          # check the goal reads as user intent\n", scenario)
+		fmt.Printf("  4. axprobe run %s --driver-model <id>\n", scenario)
 	}
 }
 
@@ -209,17 +221,22 @@ box:
     # - curl -fsSL https://example.com/install.sh | sh
 `
 
-const exampleScaffold = `schema_version: "1"
-name: example
+// scenarioScaffold is the starter scenario `axprobe init` writes. The `name:`
+// field matches the filename (.axprobe/<name>.yaml) so lint/run lookups never
+// drift from it.
+func scenarioScaffold(name string) string {
+	return `schema_version: "1"
+name: ` + name + `
 # The goal is the USER's intent in plain language — never the tool's own commands
 # or flags. The agent must discover HOW from the tool itself; that discovery is
-# the agentic experience under test. Run ` + "`axprobe lint example`" + ` to check it.
+# the agentic experience under test. Run ` + "`axprobe lint " + name + "`" + ` to check it.
 goal: <what does the user want to accomplish? e.g. "connect my data warehouse and confirm it actually works">
 expect:
   goal_reached: true
   max_human_interventions: 1
   max_false_errors: 0
 `
+}
 
 // keyMain stores a named app key in the Keychain (axprobe/app/<name>), read from
 // stdin so it never lands in argv or shell history. The name defaults to
@@ -374,7 +391,11 @@ func lintMain() {
 func probeMain() {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
 	image := fs.String("image", "", "Box image to use when there is no .axprobe/config.yaml (runs with no setup).")
-	pos := parsePositionals(fs, os.Args[2:])
+	// Single parse (not parsePositionals): flags bind only BEFORE the command, so
+	// dashes in the command itself (e.g. `axprobe probe git --version`) are taken
+	// literally instead of erroring with "flag provided but not defined".
+	_ = fs.Parse(os.Args[2:])
+	pos := fs.Args()
 	if len(pos) < 1 {
 		usage()
 	}
@@ -724,7 +745,11 @@ func exploreCmd(intent, driverModelFlag, name, workdir string) error {
 		return err
 	}
 
-	path, err := explore.Synthesize(name, intent, disc.Discovered)
+	// Distill the raw intent into a user-level goal so the synthesized scenario
+	// passes its own goal lint, instead of echoing the intent (which often names
+	// the tool). The intent is still preserved verbatim in the manifest.
+	goal := explore.DistillGoal(client, intent)
+	path, err := explore.Synthesize(name, intent, goal, disc.Discovered)
 	if err != nil {
 		return err
 	}

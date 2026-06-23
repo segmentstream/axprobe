@@ -302,17 +302,48 @@ type scenarioOut struct {
 	Intent        string                `yaml:"intent"`
 	Goal          string                `yaml:"goal"`
 	Credentials   []manifest.Credential `yaml:"credentials,omitempty"`
+	Expect        expectOut             `yaml:"expect"`
+}
+
+// expectOut is the starter AX bar written into every synthesized scenario, so the
+// author edits a real definition-of-done instead of an absent one.
+type expectOut struct {
+	GoalReached           bool `yaml:"goal_reached"`
+	MaxHumanInterventions int  `yaml:"max_human_interventions"`
+	MaxFalseErrors        int  `yaml:"max_false_errors"`
+}
+
+// DistillGoal rewrites a raw intent into a user-level goal — the user's desired
+// outcome with no tool/command/flag names — so the synthesized scenario passes
+// its own goal lint instead of echoing the intent verbatim. Falls back to the
+// intent if the model is absent or the call fails.
+func DistillGoal(client *llm.Client, intent string) string {
+	if client == nil {
+		return intent
+	}
+	sys := "You refine AX-test scenarios. Rewrite the user's INTENT as a GOAL: one or two plain sentences stating the user's real-world desired OUTCOME and how they would know it worked. Never name any tool, CLI, product, command, subcommand, or flag (including any testing tool). Say WHAT the user wants to achieve, never HOW to do it. Reply with only the goal text."
+	msg, _, err := client.Chat(context.Background(),
+		[]llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: "INTENT: " + intent}}, nil)
+	if err != nil {
+		return intent
+	}
+	if g := strings.TrimSpace(msg.Content); g != "" {
+		return g
+	}
+	return intent
 }
 
 // Synthesize writes the discovered scenario to .axprobe/<name>.yaml and returns
-// the path. The box/install stays in .axprobe/config.yaml (inherited).
-func Synthesize(name, intent string, creds []manifest.Credential) (string, error) {
+// the path. The box/install stays in .axprobe/config.yaml (inherited). goal is the
+// distilled user-level goal (see DistillGoal); intent is preserved verbatim.
+func Synthesize(name, intent, goal string, creds []manifest.Credential) (string, error) {
 	out := scenarioOut{
 		SchemaVersion: manifest.SupportedSchemaVersion,
 		Name:          name,
 		Intent:        intent,
-		Goal:          intent,
+		Goal:          goal,
 		Credentials:   creds,
+		Expect:        expectOut{GoalReached: true, MaxHumanInterventions: len(creds), MaxFalseErrors: 0},
 	}
 	data, err := yaml.Marshal(out)
 	if err != nil {
