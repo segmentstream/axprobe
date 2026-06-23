@@ -778,10 +778,10 @@ func exploreCmd(intent, driverModelFlag, name, workdir string) error {
 
 	fmt.Printf("\n▸ manifest: %s  — review & commit (%d creds discovered)\n", path, len(disc.Discovered))
 
-	// Lint the goal against the tool vocabulary the run actually used: if the
-	// intent named the tool's own commands/flags/states, it spoon-feeds the agent.
-	if warns := lint.Goal(m.Goal, res.Commands); len(warns) > 0 {
-		fmt.Println("⚠ goal lint — the intent leaks tool-interface detail; prefer user-level intent:")
+	// Lint the DISTILLED goal (what gets committed), not the raw intent: the intent
+	// may legitimately name the tool, but the goal must read as user-level intent.
+	if warns := lint.Goal(goal, res.Commands); len(warns) > 0 {
+		fmt.Println("⚠ goal lint — the synthesized goal leaks tool-interface detail; prefer user-level intent:")
 		for _, w := range warns {
 			fmt.Printf("    - %s\n", w)
 		}
