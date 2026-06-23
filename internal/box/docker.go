@@ -45,10 +45,19 @@ func NewLocalDockerBox(image string, ports ...int) *LocalDockerBox {
 // Up starts a detached container kept alive by `sleep infinity` so we can exec
 // into it. Each Up is a fresh container — that is what makes a run "from scratch".
 func (b *LocalDockerBox) Up() error {
-	// Preflight: a clean, actionable error beats the raw exec failure
-	// (`exec: "docker": executable file not found in $PATH`) an agent finds cryptic.
+	// Preflight: a clean, actionable error beats the raw exec failure an agent
+	// finds cryptic. Check both that the binary exists AND that the daemon is
+	// reachable — a present `docker` whose daemon is down otherwise fails deep in
+	// `docker run` with a low-level message.
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("Docker is required to run commands in a disposable box, but `docker` was not found on PATH — install Docker (https://docs.docker.com/get-docker/) and make sure the daemon is running")
+	}
+	if _, stderr, err := capture("docker", "info", "--format", "{{.ServerVersion}}"); err != nil {
+		msg := strings.TrimSpace(stderr)
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("Docker is installed but its daemon is not reachable — start Docker (Docker Desktop / colima / dockerd) and try again (%s)", msg)
 	}
 	args := []string{"run", "-d"}
 	for _, p := range b.Ports {
