@@ -53,6 +53,15 @@
           "type": "string",
           "description": "Container image for the box, e.g. ubuntu:24.04."
         },
+        "docker": {
+          "type": "boolean",
+          "description": "Expose the host Docker daemon inside the box via /var/run/docker.sock. High privilege; use only when the tool under test normally runs Docker."
+        },
+        "copy": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Host files to copy into the box before setup, formatted as <host-path>:<box-path>. File mode is preserved."
+        },
         "setup": {
           "type": "array",
           "items": { "type": "string" },

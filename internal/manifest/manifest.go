@@ -117,6 +117,12 @@ type Defaults struct {
 // BoxSpec declares the environment and how to get the tool under test into it.
 type BoxSpec struct {
 	Image string `yaml:"image"`
+	// Docker exposes the host Docker daemon inside the box via /var/run/docker.sock.
+	// This is high privilege, so scenarios opt in explicitly when the tool under
+	// test must run Docker (for example, a CLI that verifies generated projects in
+	// containers). It provides the socket; setup is still responsible for a docker
+	// client binary if the image does not include one.
+	Docker bool `yaml:"docker,omitempty"`
 	// Copy injects host files into the box (before setup runs): each entry is
 	// "<host-path>:<box-path>". File mode is preserved, so a compiled binary stays
 	// executable — the blessed way to test a prebuilt binary without mounting the

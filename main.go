@@ -786,6 +786,10 @@ func bringUp(m *manifest.Manifest, workdir string, extraPorts ...int) (box.Box, 
 	}
 	b := box.NewLocalDockerBox(m.Box.Image, ports...)
 	b.Workdir = workdir // mount the active workspace; "" = disposable
+	b.HostDocker = m.Box.Docker
+	if b.HostDocker {
+		fmt.Println("▸ docker:   host daemon exposed")
+	}
 	fmt.Printf("▸ box up:   %s\n", m.Box.Image)
 	if err := b.Up(); err != nil {
 		return nil, nil, err

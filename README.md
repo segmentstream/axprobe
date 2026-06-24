@@ -99,6 +99,18 @@ directory, so committed fixtures should live next to manifests under
 `.axprobe/fixtures/`. Use `--keep-workspace` to keep the copied temp workspace
 after a run for debugging.
 
+Some tools need Docker during the tested workflow. A scenario can opt in to the
+host Docker daemon:
+
+```yaml
+box:
+  image: docker:27-cli
+  docker: true
+```
+
+This exposes `/var/run/docker.sock` inside the box and sets `DOCKER_HOST`. It is
+high privilege, so enable it only for scenarios that genuinely need Docker.
+
 Because `expect` makes a run pass/fail, a scenario is an **executable spec**: write
 it before the feature (red), implement until green, and a regression turns it red.
 

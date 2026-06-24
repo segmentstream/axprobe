@@ -22,6 +22,9 @@ const containerWorkdir = "/workspace"
 type LocalDockerBox struct {
 	Image string
 	Ports []int // loopback ports to publish (host 127.0.0.1:p -> box p)
+	// HostDocker exposes the host Docker daemon inside the box. This is a powerful
+	// opt-in escape hatch for tools whose normal runtime uses Docker.
+	HostDocker bool
 	// Workdir, if set, is a host directory bind-mounted at /workspace and used as
 	// the working directory — the live journey's persistent, inspectable project.
 	// It is never wiped by the harness; it is the user's real repo.
@@ -72,6 +75,12 @@ func (b *LocalDockerBox) Up() error {
 			return fmt.Errorf("workdir: %w", err)
 		}
 		args = append(args, "-v", abs+":"+containerWorkdir, "-w", containerWorkdir)
+	}
+	if b.HostDocker {
+		args = append(args,
+			"-v", "/var/run/docker.sock:/var/run/docker.sock",
+			"-e", "DOCKER_HOST=unix:///var/run/docker.sock",
+		)
 	}
 	args = append(args, b.Image, "sleep", "infinity")
 
