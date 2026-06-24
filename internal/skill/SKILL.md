@@ -214,12 +214,28 @@ framed with an AXprobe issue-list prefix:
 
 - **Title** — `[AXprobe] <the defect in one line>`
 - **Summary** — one paragraph: what is wrong.
-- **Observed** — a sanitized account of what the harness tried and where it got
-  stuck. Include minimal command examples, but use placeholders for private
-  identifiers: `<source-name>`, `<external-resource>`, `<local-path>`,
-  `<credential-file>`, etc. Do **not** include manifest paths, local paths,
-  report paths, project IDs, dataset/table names, credential paths, raw payload
-  values, tokens, or secrets.
+- **What Happened** — the narrative of the run before requests:
+  - **Goal** — what the agent was trying to accomplish.
+  - **Agent path** — the chronological path it took, including useful discoveries,
+    detours, and the major tool surfaces it used. This is not a feature-request
+    list.
+  - **What worked** — useful affordances the run proved: structured JSON,
+    state-machine next actions, discovery/browse/query commands, clear created-file
+    output, good diagnostics, etc.
+  - **Where it stopped** — the final wall that left the goal incomplete, not just
+    the first friction.
+  - **What would have helped** — the missing command, diagnostic, structured state,
+    or preflight that would have let the agent continue.
+  Keep the whole section public-safe: use placeholders for private identifiers
+  (`<source-name>`, `<external-resource>`, `<local-path>`, `<credential-file>`,
+  etc.). Do **not** include manifest paths, local paths, report paths, project IDs,
+  dataset/table names, credential paths, raw payload values, tokens, or secrets.
+- **Attempt Transcript** — a chronological public-safe transcript of the path the
+  agent took. This is not a tiny failure excerpt: include the important
+  command/result steps from discovery through the final wall, including useful
+  successful steps, detours, diagnostics, scaffold/generate actions, and the point
+  where progress stopped. Prefer 8-15 concise command/result pairs; summarize long
+  JSON to the fields that mattered.
 - **Failed Transcript** — a short public-safe transcript excerpt proving the wall:
   the command/output that failed, plus the immediately preceding command if it
   revealed state the failing command should have used.

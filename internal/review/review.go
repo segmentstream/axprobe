@@ -20,7 +20,13 @@ import (
 type finding struct {
 	Title             string              `json:"title"`
 	Summary           string              `json:"summary"`
+	Goal              string              `json:"goal"`
+	AgentPath         string              `json:"agent_path"`
+	Worked            string              `json:"worked"`
+	Stopped           string              `json:"stopped"`
+	WouldHaveHelped   string              `json:"would_have_helped"`
 	Observed          string              `json:"observed"`
+	PathTranscript    string              `json:"path_transcript"`
 	FailedTranscript  string              `json:"failed_transcript"`
 	WhyItMatters      []string            `json:"why_it_matters"`
 	DesiredTranscript string              `json:"desired_transcript"`
@@ -47,18 +53,23 @@ func WithModel(ctx context.Context, client *llm.Client, r report.Report) (string
 	if strings.TrimSpace(desired) == "" {
 		desired = f.IdealFlow
 	}
-	return report.RenderFinding(r, f.Title, f.Summary, f.Observed, f.FailedTranscript, f.WhyItMatters, desired, f.Request), nil
+	return report.RenderFinding(r, f.Title, f.Summary, f.Goal, f.AgentPath, f.Worked, f.Stopped, f.WouldHaveHelped, f.Observed, f.PathTranscript, f.FailedTranscript, f.WhyItMatters, desired, f.Request), nil
 }
 
 const reviewerInstructions = `You are an AX reviewer. Given a run report (an agent driving a CLI toward a goal), produce a finding about the agentic-experience defect(s) the run reveals.
 Return ONLY a JSON object, no prose:
-{"title":"<the defect in one line, WITHOUT '[AXprobe]' or 'Agentic UX:' prefixes>","summary":"<one paragraph>","observed":"<public-safe observed section>","failed_transcript":"<see failed_transcript rules>","why_it_matters":["<principle broken + impact>", "..."],"desired_transcript":"<see desired_transcript rules>","request":[{"change":"<concrete change>","why":"<why this improves the agentic workflow>"}]}
+{"title":"<the defect in one line, WITHOUT '[AXprobe]' or 'Agentic UX:' prefixes>","summary":"<one paragraph>","goal":"<what the agent was trying to accomplish>","agent_path":"<chronological path the agent took, including useful discoveries and detours>","worked":"<what parts of the CLI/harness helped the agent make progress>","stopped":"<where the agent stopped and why the goal remained incomplete>","would_have_helped":"<what tool behavior would have let the agent continue>","path_transcript":"<see path_transcript rules>","failed_transcript":"<see failed_transcript rules>","why_it_matters":["<principle broken + impact>", "..."],"desired_transcript":"<see desired_transcript rules>","request":[{"change":"<concrete change>","why":"<why this improves the agentic workflow>"}]}
 Rules:
 - The output is a PUBLIC GitHub issue draft for the tested tool's repository. Do not reveal private provenance: no manifest paths, local paths, report paths, usernames, project IDs, dataset/table names, credential paths, raw payload values, secrets, tokens, or exact internal repo names unless the transcript proves they are public tool names.
 - Do not reveal private source names either. If the run used a named source, package, adapter, customer, campaign, project, dataset, table, resource, or integration as test data, replace it with placeholders such as <source-name>, <adapter-name>, or <external-resource>.
 - Mention that an autonomous/agentic harness attempted the workflow, but do not name the private scenario or report file. AXprobe attribution is added by the renderer; do not add your own footer.
-- observed is a short sanitized account of what the agent could do and where it got stuck. Use placeholders like <source-name>, <external-resource>, <field-name>, and <local-path> when concrete identifiers are not needed. Include only minimal command examples needed to prove the product gap.
-- failed_transcript is a SHORT, PUBLIC-SAFE transcript excerpt of the real failure. It must be commands and results, not prose. Use placeholders for private identifiers. Include the command that proves the wall and any immediately preceding command that should have supplied enough state to avoid it.
+- The review must preserve the run story before making requests: goal, agent_path, worked, stopped, and would_have_helped are mandatory. They should explain what the agent tried to do, the sequence it followed, what helped, exactly where it failed, and what affordance would have let it progress.
+- agent_path is chronological, not a feature-request list. Include the major commands or tool surfaces the agent used, but sanitize private identifiers with placeholders like <source-name>, <external-resource>, <field-name>, and <local-path>.
+- worked must credit useful affordances the run proved (for example structured JSON, state-machine next_action, discovery/browse commands, clear scaffolding output). If nothing worked, say so.
+- stopped must name the final wall that left the goal incomplete, not merely the first friction.
+- would_have_helped bridges the stopped state to the desired transcript: the missing command, diagnostic, structured state, or preflight that would have let the agent continue.
+- path_transcript is a chronological, PUBLIC-SAFE transcript of the agent's attempted path, not a tiny failure excerpt. Show the important command/result steps from discovery through the final wall: setup/health checks if relevant, help or contract discovery, scaffold/generate actions, state/config checks, diagnostics, and the point where progress stopped. Prefer 8-15 concise command/result pairs; include enough successful steps to make the failure understandable. Use placeholders for private identifiers and summarize long JSON with the fields that mattered.
+- failed_transcript is a SHORT, PUBLIC-SAFE transcript excerpt proving the final wall. It must be commands and results, not prose. Use placeholders for private identifiers. Include the command that proves the wall and any immediately preceding command that should have supplied enough state to avoid it.
 - desired_transcript is a CONCRETE tool-call transcript — the reader must see exactly what is called and why. Each step: a "# why" comment (one line), the command line ("$ ..."), and the "→ result" the tool would return. Show real command/flag names and realistic results; if a step edits a file, show the key lines. Not prose — a runnable-looking sequence.
 - GROUND desired_transcript in reality, do not invent the interface. If a "driver post-mortem" is present, build the desired_transcript from it — the driver actually ran the tool and saw its real commands, flags, and outputs. Otherwise use only command/flag names that appear in the transcript. Mark any step that needs a capability the tool does NOT yet offer with "# PROPOSED". Never fabricate a flag or output.
 - Keep failed_transcript and desired_transcript public-safe too: use placeholders for private identifiers and do not show real raw data. Do not invent sample payload contents or JSON keys; if row values were not observed, write "→ sample rows with payload values redacted" or use <json-key>.

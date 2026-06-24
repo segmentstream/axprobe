@@ -234,6 +234,13 @@ func categoryTally(obs []driver.Observation) string {
 // wall usually is; earlier steps are summarized as omitted.
 const maxDraftSteps = 15
 
+// maxAttemptTranscriptSteps caps the deterministic fallback used by `review`.
+// The review model should provide a curated path transcript, but the renderer
+// still needs a useful fallback when the model omits it.
+const maxAttemptTranscriptSteps = 30
+
+const maxAttemptResultChars = 700
+
 // ObservedBlock renders the run transcript as the Observed evidence (a fenced
 // block of `$ command → result`), trimmed to the endgame. This is the real,
 // verbatim evidence — never model-generated.
@@ -264,12 +271,20 @@ func ObservedBlock(r Report) string {
 // raw transcript verbatim; that made good private diagnostics but poor public
 // issues. Keep the public issue sanitized by default and iterate review quality
 // from here as real AXprobe findings teach us better patterns.
-func RenderFinding(r Report, title, summary, observed, failedTranscript string, why []string, desiredTranscript string, request RequestItems) string {
+func RenderFinding(r Report, title, summary, goal, agentPath, worked, stopped, wouldHaveHelped, observed, pathTranscript, failedTranscript string, why []string, desiredTranscript string, request RequestItems) string {
 	var b strings.Builder
 	title = sanitizePublicText(stripTitlePrefixes(title), r)
 	fmt.Fprintf(&b, "Title: [AXprobe] %s\n\n", title)
 	fmt.Fprintf(&b, "## Summary\n%s\n\n", sanitizePublicText(summary, r))
-	fmt.Fprintf(&b, "## Observed\n%s\n", sanitizedObserved(r, observed))
+	b.WriteString("## What Happened\n")
+	writeNarrativeField(&b, r, "Goal", goal, fallbackGoal(r))
+	writeNarrativeField(&b, r, "Agent path", firstNonEmpty(agentPath, observed), sanitizedObserved(r, observed))
+	writeNarrativeField(&b, r, "What worked", worked, "_TODO (operator): useful affordances the agent successfully used._")
+	writeNarrativeField(&b, r, "Where it stopped", stopped, fallbackStopped(r))
+	writeNarrativeField(&b, r, "What would have helped", wouldHaveHelped, "_TODO (operator): the missing tool behavior that would have let the agent continue._")
+
+	b.WriteString("\n## Attempt Transcript\n")
+	b.WriteString(renderAttemptTranscript(r, pathTranscript))
 
 	b.WriteString("\n## Failed Transcript\n")
 	if strings.TrimSpace(failedTranscript) == "" {
@@ -314,18 +329,135 @@ func RenderFinding(r Report, title, summary, observed, failedTranscript string, 
 	return b.String()
 }
 
+func writeNarrativeField(b *strings.Builder, r Report, label, value, fallback string) {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		text = strings.TrimSpace(fallback)
+	}
+	fmt.Fprintf(b, "**%s:** %s\n\n", label, sanitizePublicText(text, r))
+}
+
+func fallbackGoal(r Report) string {
+	return fmt.Sprintf("Complete the `%s` scenario goal.", r.Scenario)
+}
+
+func fallbackStopped(r Report) string {
+	if strings.TrimSpace(r.Summary) != "" {
+		return r.Summary
+	}
+	return fmt.Sprintf("The run ended with outcome `%s` after %d steps.", r.Outcome, r.Steps)
+}
+
+func renderAttemptTranscript(r Report, pathTranscript string) string {
+	if strings.TrimSpace(pathTranscript) != "" {
+		return strings.TrimRight(sanitizePublicText(pathTranscript, r), "\n") + "\n"
+	}
+	if len(r.Transcript) == 0 {
+		return "_TODO (operator): chronological command/result path the agent attempted._\n"
+	}
+
+	var b strings.Builder
+	b.WriteString("```text\n")
+	steps := r.Transcript
+	if len(steps) > maxAttemptTranscriptSteps {
+		omitted := len(steps) - maxAttemptTranscriptSteps
+		head := maxAttemptTranscriptSteps / 3
+		tail := maxAttemptTranscriptSteps - head
+		for _, s := range steps[:head] {
+			writeAttemptStep(&b, r, s)
+		}
+		fmt.Fprintf(&b, "… (%d middle steps omitted) …\n", omitted)
+		for _, s := range steps[len(steps)-tail:] {
+			writeAttemptStep(&b, r, s)
+		}
+	} else {
+		for _, s := range steps {
+			writeAttemptStep(&b, r, s)
+		}
+	}
+	b.WriteString("```\n")
+	return b.String()
+}
+
+func writeAttemptStep(b *strings.Builder, r Report, s driver.Step) {
+	cmd := strings.TrimSpace(sanitizePublicText(s.Command, r))
+	if cmd == "" {
+		return
+	}
+	fmt.Fprintf(b, "$ %s\n", cmd)
+	result := strings.TrimSpace(s.Result)
+	if result == "" {
+		return
+	}
+	result = sanitizePublicText(result, r)
+	if len(result) > maxAttemptResultChars {
+		result = strings.TrimSpace(result[:maxAttemptResultChars]) + " …"
+	}
+	if s.ExitCode != 0 {
+		fmt.Fprintf(b, "→ %s (exit %d)\n", result, s.ExitCode)
+	} else {
+		fmt.Fprintf(b, "→ %s\n", result)
+	}
+}
+
 // Draft is the no-LLM finding: sanitized run shape + observations as
 // why-it-matters, with transcript/request sections scaffolded for the operator.
 func Draft(r Report) string {
 	why := make([]string, 0, len(r.Observations))
+	var suggestions []string
 	for _, o := range r.Observations {
 		why = append(why, fmt.Sprintf("**%s** — %s", o.Category, o.Note))
+		if s := strings.TrimSpace(o.Suggestion); s != "" {
+			suggestions = append(suggestions, s)
+		}
 	}
 	summary := r.Summary
 	if strings.TrimSpace(summary) == "" {
 		summary = "The agent could not complete the goal — see the transcript below."
 	}
-	return RenderFinding(r, draftTitle(r), summary, "", "", why, "", nil)
+	agentPath := strings.TrimSpace(r.PostMortem)
+	if agentPath == "" {
+		agentPath = "See the Attempt Transcript for the chronological command path."
+	}
+	worked := "The Attempt Transcript shows which commands produced useful state before the run stopped."
+	stopped := fallbackStopped(r)
+	wouldHaveHelped := "A machine-actionable next step from the final observed state, so the agent can continue without guessing."
+	if len(suggestions) > 0 {
+		wouldHaveHelped = strings.Join(suggestions, " ")
+	}
+	desired := extractIdealSequence(r.PostMortem)
+	return RenderFinding(r, draftTitle(r), summary, "", agentPath, worked, stopped, wouldHaveHelped, "", "", failureTranscriptFallback(r), why, desired, nil)
+}
+
+func failureTranscriptFallback(r Report) string {
+	if len(r.Transcript) == 0 {
+		return ""
+	}
+	start := len(r.Transcript) - 5
+	if start < 0 {
+		start = 0
+	}
+	var b strings.Builder
+	b.WriteString("```text\n")
+	for _, s := range r.Transcript[start:] {
+		writeAttemptStep(&b, r, s)
+	}
+	b.WriteString("```\n")
+	return b.String()
+}
+
+func extractIdealSequence(pm string) string {
+	pm = strings.TrimSpace(pm)
+	if pm == "" {
+		return ""
+	}
+	lower := strings.ToLower(pm)
+	for _, marker := range []string{"**ideal sequence", "ideal sequence", "desired sequence"} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			return strings.TrimSpace(pm[idx:])
+		}
+	}
+	return ""
 }
 
 func draftTitle(r Report) string {
@@ -375,6 +507,7 @@ var (
 	threePartBareIdentifierRE   = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*\.[A-Za-z_][A-Za-z0-9_\-]*\.[A-Za-z_][A-Za-z0-9_\-]*\b`)
 	threePartSlashIdentifierRE  = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9_-]*/[A-Za-z_][A-Za-z0-9_\-]*/[A-Za-z_][A-Za-z0-9_\-]*\b`)
 	sourcePackageRE             = regexp.MustCompile(`\bsources/[A-Za-z0-9_-]+\b`)
+	homeBinToolPathRE           = regexp.MustCompile(`(?:/root|/home/[A-Za-z0-9_-]+)/\.[A-Za-z0-9_-]+/bin/([A-Za-z0-9_-]+)`)
 	reportPathRE                = regexp.MustCompile(`\b[A-Za-z0-9_.-]+\.report\.json\b`)
 	credentialPathRE            = regexp.MustCompile(`(?i)\b[A-Za-z0-9_.-]*(credential|credentials|token|secret|key)[A-Za-z0-9_.-]*\.json\b`)
 	manifestPathRE              = regexp.MustCompile(`\B\.axprobe/[A-Za-z0-9_.-]+\.ya?ml\b`)
@@ -391,6 +524,7 @@ func sanitizePublicText(s string, r Report) string {
 	if s == "" {
 		return s
 	}
+	s = homeBinToolPathRE.ReplaceAllString(s, "$1")
 	s = localPathRE.ReplaceAllString(s, "<local-path>")
 	s = threePartQuotedIdentifierRE.ReplaceAllString(s, "`<external-resource>`")
 	s = threePartBareIdentifierRE.ReplaceAllString(s, "<external-resource>")
