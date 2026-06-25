@@ -14,6 +14,16 @@ type ExecResult struct {
 	Stderr   string
 }
 
+// CommandBridge exposes a host-side command shim for external agent drivers.
+// The shim is the only command external drivers should call: it executes inside
+// the already-provisioned box and records a transcript log for the AX report.
+type CommandBridge struct {
+	Dir      string
+	BashPath string
+	LogPath  string
+	Cleanup  func()
+}
+
 // Box is an isolated, disposable environment the harness drives a CLI inside.
 //
 // Layer 0 ships only LocalDockerBox. GithubRunnerBox (the CI runner is itself

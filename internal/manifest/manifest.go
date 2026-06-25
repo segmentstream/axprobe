@@ -110,6 +110,7 @@ type Config struct {
 // Defaults are repo/workspace-level operator defaults. They are lower precedence
 // than flags/env and higher precedence than ~/.axprobe/config.yaml.
 type Defaults struct {
+	Driver      string `yaml:"driver,omitempty"`
 	DriverModel string `yaml:"driver_model,omitempty"`
 	ReviewModel string `yaml:"review_model,omitempty"`
 }

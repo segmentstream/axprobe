@@ -125,3 +125,43 @@ func TestRenderFindingProducesPublicSafeIssue(t *testing.T) {
 		}
 	}
 }
+
+func TestSanitizeKeepsGenericReadyFromScenarioName(t *testing.T) {
+	rep := Report{Scenario: "vercel-run-ready"}
+	got := sanitizePublicText("The project is ready; next action is run.", rep)
+	if strings.Contains(got, "<source-name>") {
+		t.Fatalf("generic ready was redacted as source name: %q", got)
+	}
+	if !strings.Contains(got, "ready") {
+		t.Fatalf("expected ready to remain readable: %q", got)
+	}
+}
+
+func TestDraftDoesNotPublishPostMortemSpeculation(t *testing.T) {
+	rep := Report{
+		Scenario: "server-run",
+		Outcome:  "stuck",
+		Summary:  "The command failed after starting services.",
+		PostMortem: `**Post-mortem**
+I was trying to run the tool.
+
+**Ideal command sequence**
+$ tool run --json --health-host 127.0.0.1
+→ Not offered by the CLI`,
+		Transcript: []driver.Step{{
+			Command:  "tool run --json",
+			Result:   `json: command="run" status="error" diagnostics.message="connection refused"`,
+			ExitCode: 1,
+		}},
+	}
+
+	out := Draft(rep)
+	for _, leak := range []string{"Post-mortem", "Ideal command sequence", "--health-host", "Not offered by the CLI"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("fallback draft leaked post-mortem speculation %q:\n%s", leak, out)
+		}
+	}
+	if !strings.Contains(out, "$ tool run --json") {
+		t.Fatalf("fallback draft should keep transcript evidence:\n%s", out)
+	}
+}

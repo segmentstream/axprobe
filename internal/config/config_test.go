@@ -12,7 +12,14 @@ func TestResolvePrecedence(t *testing.T) {
 
 	t.Setenv("AXPROBE_DRIVER_MODEL", "env-driver")
 	t.Setenv("AXPROBE_REVIEW_MODEL", "env-judge")
+	t.Setenv("AXPROBE_DRIVER", "env-runtime")
 
+	if got := ResolveDriver("flag-runtime", "workspace-runtime"); got != "flag-runtime" {
+		t.Fatalf("driver flag must win: got %q", got)
+	}
+	if got := ResolveDriver("", "workspace-runtime"); got != "env-runtime" {
+		t.Fatalf("driver env must win when no flag: got %q", got)
+	}
 	if got := ResolveDriverModel("flag-driver", "workspace-driver"); got != "flag-driver" {
 		t.Fatalf("flag must win: got %q", got)
 	}
@@ -30,10 +37,14 @@ func TestResolvePrecedence(t *testing.T) {
 func TestResolveFromConfigFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("AXPROBE_DRIVER", "")
 	t.Setenv("AXPROBE_DRIVER_MODEL", "")
 	t.Setenv("AXPROBE_REVIEW_MODEL", "")
-	if err := writeConfig(home, "driver_model: cfg-driver\nreview_model: cfg-judge\n"); err != nil {
+	if err := writeConfig(home, "driver: cfg-runtime\ndriver_model: cfg-driver\nreview_model: cfg-judge\n"); err != nil {
 		t.Fatal(err)
+	}
+	if got := ResolveDriver("", ""); got != "cfg-runtime" {
+		t.Fatalf("config driver: got %q", got)
 	}
 	if got := ResolveDriverModel("", ""); got != "cfg-driver" {
 		t.Fatalf("config driver_model: got %q", got)
@@ -47,12 +58,18 @@ func TestResolveFromConfigFile(t *testing.T) {
 	if got := ResolveReviewModel("", "workspace-judge"); got != "workspace-judge" {
 		t.Fatalf("workspace review_model must beat user config: got %q", got)
 	}
+	if got := ResolveDriver("", "workspace-runtime"); got != "workspace-runtime" {
+		t.Fatalf("workspace driver must beat user config: got %q", got)
+	}
 	// Review must NOT fall back to the driver model when review_model is unset.
 	if err := writeConfig(home, "driver_model: cfg-driver\n"); err != nil {
 		t.Fatal(err)
 	}
 	if got := ResolveReviewModel("", ""); got != "" {
 		t.Fatalf("review must not inherit driver model: got %q", got)
+	}
+	if got := ResolveDriver("", ""); got != "axprobe" {
+		t.Fatalf("driver must default to axprobe: got %q", got)
 	}
 }
 

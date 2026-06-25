@@ -25,11 +25,20 @@ type LocalDockerBox struct {
 	// HostDocker exposes the host Docker daemon inside the box. This is a powerful
 	// opt-in escape hatch for tools whose normal runtime uses Docker.
 	HostDocker bool
-	// Workdir, if set, is a host directory bind-mounted at /workspace and used as
+	// Workdir, if set, is a host directory bind-mounted into the box and used as
 	// the working directory — the live journey's persistent, inspectable project.
 	// It is never wiped by the harness; it is the user's real repo.
-	Workdir     string
-	containerID string
+	Workdir string
+	// containerWorkdir is where Workdir is mounted inside the box. It is normally
+	// /workspace. When HostDocker is enabled, it becomes the host absolute path so
+	// Docker commands run by the tool under test pass bind-mount paths the host
+	// daemon can actually resolve.
+	containerWorkdir string
+	// hostDockerHome is a host-resolvable HOME mounted into the box when HostDocker
+	// is enabled. Tools that start child Docker containers often bind-mount files
+	// from HOME; those paths must exist from the host daemon's point of view.
+	hostDockerHome string
+	containerID    string
 	// basePath is the image's own $PATH, captured from a non-login shell at Up.
 	// Commands run in a login shell (so profile.d-installed tools are found), which
 	// rebuilds PATH from /etc/profile and drops the image's ENV PATH; we re-add
@@ -52,6 +61,19 @@ func (b *LocalDockerBox) Up() error {
 	// finds cryptic. Check both that the binary exists AND that the daemon is
 	// reachable — a present `docker` whose daemon is down otherwise fails deep in
 	// `docker run` with a low-level message.
+	if b.HostDocker {
+		home, err := prepareHostDockerHome()
+		if err != nil {
+			return err
+		}
+		b.hostDockerHome = home
+		defer func() {
+			if b.containerID == "" && b.hostDockerHome != "" {
+				_ = os.RemoveAll(b.hostDockerHome)
+				b.hostDockerHome = ""
+			}
+		}()
+	}
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("Docker is required to run commands in a disposable box, but `docker` was not found on PATH — install Docker (https://docs.docker.com/get-docker/) and make sure the daemon is running")
 	}
@@ -74,13 +96,21 @@ func (b *LocalDockerBox) Up() error {
 		if err := os.MkdirAll(abs, 0o755); err != nil {
 			return fmt.Errorf("workdir: %w", err)
 		}
-		args = append(args, "-v", abs+":"+containerWorkdir, "-w", containerWorkdir)
+		b.containerWorkdir = b.mountTarget(abs)
+		args = append(args, "-v", abs+":"+b.containerWorkdir, "-w", b.containerWorkdir)
 	}
 	if b.HostDocker {
 		args = append(args,
 			"-v", "/var/run/docker.sock:/var/run/docker.sock",
 			"-e", "DOCKER_HOST=unix:///var/run/docker.sock",
 		)
+		if b.hostDockerHome != "" {
+			args = append(args,
+				"-v", b.hostDockerHome+":"+b.hostDockerHome,
+				"-e", "HOME="+b.hostDockerHome,
+				"-e", "AXPROBE_HOME="+b.hostDockerHome,
+			)
+		}
 	}
 	args = append(args, b.Image, "sleep", "infinity")
 
@@ -105,6 +135,29 @@ func (b *LocalDockerBox) Up() error {
 		return err
 	}
 	return nil
+}
+
+func (b *LocalDockerBox) mountTarget(absWorkdir string) string {
+	if b.HostDocker {
+		return absWorkdir
+	}
+	return containerWorkdir
+}
+
+func prepareHostDockerHome() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("host docker home: find user home: %w", err)
+	}
+	parent := filepath.Join(home, ".axprobe", "tmp")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", fmt.Errorf("host docker home: %w", err)
+	}
+	dir, err := os.MkdirTemp(parent, "home-")
+	if err != nil {
+		return "", fmt.Errorf("host docker home: %w", err)
+	}
+	return dir, nil
 }
 
 // startLoopbackRelays makes a published port reach a server that binds the
@@ -144,13 +197,16 @@ func (b *LocalDockerBox) startLoopbackRelays() error {
 func (b *LocalDockerBox) execArgs(cmd string) []string {
 	a := []string{"exec"}
 	if b.Workdir != "" {
-		a = append(a, "-w", containerWorkdir)
+		a = append(a, "-w", b.containerWorkdir)
 	}
 	// Login shell (-l) so profile.d-installed tools are on PATH; but the login
 	// shell rebuilds PATH from /etc/profile and drops the image's ENV PATH, so we
 	// re-append the captured image PATH (union of both) — no fixture PATH hacks.
 	if b.basePath != "" {
 		cmd = `export PATH="$PATH:` + b.basePath + `"; ` + cmd
+	}
+	if b.hostDockerHome != "" {
+		cmd = `export HOME=` + shellQuote(b.hostDockerHome) + ` AXPROBE_HOME=` + shellQuote(b.hostDockerHome) + `; ` + cmd
 	}
 	return append(a, b.containerID, "sh", "-lc", cmd)
 }
@@ -204,11 +260,77 @@ func (b *LocalDockerBox) ExecStream(cmd string, out io.Writer) (ExecResult, erro
 	return res, nil
 }
 
+// NewCommandBridge creates a host-side axprobe-bash shim for external drivers.
+// The shim executes commands inside this box and logs command/result blocks for
+// report reconstruction.
+func (b *LocalDockerBox) NewCommandBridge() (*CommandBridge, error) {
+	if b.containerID == "" {
+		return nil, fmt.Errorf("box is not up")
+	}
+	dir, err := os.MkdirTemp("", "axprobe-bridge-")
+	if err != nil {
+		return nil, err
+	}
+	bridge := &CommandBridge{
+		Dir:      dir,
+		BashPath: filepath.Join(dir, "axprobe-bash"),
+		LogPath:  filepath.Join(dir, "transcript.log"),
+	}
+	bridge.Cleanup = func() { _ = os.RemoveAll(dir) }
+	dockerPrefix := "docker exec"
+	if b.Workdir != "" {
+		dockerPrefix += " -w " + shellQuote(b.containerWorkdir)
+	}
+	dockerPrefix += " " + shellQuote(b.containerID) + " sh -lc"
+	cmdPrefix := ""
+	if b.basePath != "" {
+		cmdPrefix += `export PATH="$PATH:` + b.basePath + `"; `
+	}
+	if b.hostDockerHome != "" {
+		cmdPrefix += `export HOME=` + shellQuote(b.hostDockerHome) + ` AXPROBE_HOME=` + shellQuote(b.hostDockerHome) + `; `
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+set +e
+if [ "$#" -eq 0 ]; then
+  echo "usage: axprobe-bash '<command>'" >&2
+  exit 2
+fi
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+  echo "usage: axprobe-bash '<command>'"
+  echo "Runs the command inside the AXprobe disposable box and records it in the run transcript."
+  exit 0
+fi
+cmd="$*"
+tmp="$(mktemp)"
+log=%s
+prefix=%s
+printf '\n<<<AXPROBE-CMD>>>\n%%s\n' "$cmd" >> "$log"
+%s "${prefix}${cmd}" > "$tmp" 2>&1
+code=$?
+cat "$tmp"
+printf '<<<AXPROBE-EXIT:%%s>>>\n' "$code" >> "$log"
+cat "$tmp" >> "$log"
+printf '\n<<<AXPROBE-END>>>\n' >> "$log"
+rm -f "$tmp"
+exit "$code"
+`, shellQuote(bridge.LogPath), shellQuote(cmdPrefix), dockerPrefix)
+	if err := os.WriteFile(bridge.BashPath, []byte(script), 0o755); err != nil {
+		bridge.Cleanup()
+		return nil, err
+	}
+	return bridge, nil
+}
+
 // ArchiveOut tars the given paths from the box (relative to /) and returns the
 // gzipped bytes.
 func (b *LocalDockerBox) ArchiveOut(paths []string) ([]byte, error) {
 	if b.containerID == "" {
 		return nil, fmt.Errorf("box is not up")
+	}
+	if b.hostDockerHome != "" {
+		if err := b.syncHomeForArchiveOut(); err != nil {
+			return nil, err
+		}
 	}
 	args := []string{"exec", b.containerID, "tar", "czf", "-", "-C", "/"}
 	for _, p := range paths {
@@ -235,6 +357,27 @@ func (b *LocalDockerBox) ArchiveIn(data []byte) error {
 	c.Stderr = &errBuf
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("tar in: %w: %s", err, strings.TrimSpace(errBuf.String()))
+	}
+	if b.hostDockerHome != "" {
+		if err := b.syncHomeAfterArchiveIn(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *LocalDockerBox) syncHomeAfterArchiveIn() error {
+	cmd := `mkdir -p "$HOME"; if [ -d /root ]; then for p in /root/.[!.]* /root/..?* /root/*; do [ -e "$p" ] || continue; cp -a "$p" "$HOME"/; done; fi`
+	if _, stderr, err := capture("docker", "exec", b.containerID, "sh", "-c", cmd); err != nil {
+		return fmt.Errorf("sync restored credentials into host docker home: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+func (b *LocalDockerBox) syncHomeForArchiveOut() error {
+	cmd := `mkdir -p /root; if [ -d "$HOME" ]; then for p in "$HOME"/.[!.]* "$HOME"/..?* "$HOME"/*; do [ -e "$p" ] || continue; cp -a "$p" /root/; done; fi`
+	if _, stderr, err := capture("docker", "exec", b.containerID, "sh", "-c", cmd); err != nil {
+		return fmt.Errorf("sync host docker home before credential capture: %w: %s", err, strings.TrimSpace(stderr))
 	}
 	return nil
 }
@@ -294,11 +437,22 @@ func (b *LocalDockerBox) Down() error {
 		return nil
 	}
 	id := b.containerID
+	home := b.hostDockerHome
 	b.containerID = ""
+	b.hostDockerHome = ""
 	if _, stderr, err := capture("docker", "rm", "-f", id); err != nil {
 		return fmt.Errorf("docker rm: %w: %s", err, strings.TrimSpace(stderr))
 	}
+	if home != "" {
+		if err := os.RemoveAll(home); err != nil {
+			return fmt.Errorf("remove host docker home: %w", err)
+		}
+	}
 	return nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // capture runs a command and returns its stdout and stderr separately.

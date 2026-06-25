@@ -1,8 +1,10 @@
 package driver
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/segmentstream/axprobe/internal/box"
 	"github.com/segmentstream/axprobe/internal/manifest"
 )
 
@@ -37,5 +39,37 @@ func TestRepeatedNoProgress(t *testing.T) {
 	// A verify command whose result CHANGED is progress, not a loop.
 	if n := repeatedNoProgress(ts, "tool init --json", "ready: true"); n != 0 {
 		t.Errorf("changed result should not count as repeat; got %d", n)
+	}
+}
+
+func TestResultLineSummarizesJSONState(t *testing.T) {
+	res := box.ExecResult{Stdout: `{
+  "schema_version": "2",
+  "command": "init",
+  "status": "ok",
+  "data": {
+    "envelope": {
+      "ready": true,
+      "next_action": {
+        "type": "run_command",
+        "stage": "ready",
+        "command": "tool run"
+      }
+    }
+  }
+}`}
+	got := resultLine(res)
+	for _, want := range []string{
+		`command="init"`,
+		`status="ok"`,
+		`data.envelope.ready=true`,
+		`data.envelope.next_action.command="tool run"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("resultLine missing %q:\n%s", want, got)
+		}
+	}
+	if got == "{" {
+		t.Fatalf("JSON output summarized to bare brace")
 	}
 }

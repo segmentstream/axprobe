@@ -27,6 +27,7 @@ import (
 	"github.com/segmentstream/axprobe/internal/driver"
 	"github.com/segmentstream/axprobe/internal/events"
 	"github.com/segmentstream/axprobe/internal/explore"
+	"github.com/segmentstream/axprobe/internal/externaldriver"
 	"github.com/segmentstream/axprobe/internal/lint"
 	"github.com/segmentstream/axprobe/internal/llm"
 	"github.com/segmentstream/axprobe/internal/manifest"
@@ -50,7 +51,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "commands:")
 	fmt.Fprintln(w, "  axprobe init [--name <scenario>]")
 	fmt.Fprintln(w, "      scaffold .axprobe/config.yaml (the workspace install) + a starter scenario")
-	fmt.Fprintln(w, "  axprobe run [--driver-model <id>] [--report <path>] [--workdir <dir>] [--keep-workspace] [--reset] [<manifest.yaml> | <scenario-name>]")
+	fmt.Fprintln(w, "  axprobe run [--driver axprobe|codex|claude] [--driver-model <id>] [--report <path>] [--workdir <dir>] [--keep-workspace] [--reset] [<manifest.yaml> | <scenario-name>]")
 	fmt.Fprintln(w, "      with no argument, runs every .axprobe/*.yaml in the current directory")
 	fmt.Fprintln(w, "      --workdir mounts a persistent project; otherwise workspace.template is copied from .axprobe/fixtures into a temp workspace")
 	fmt.Fprintln(w, "  axprobe explore --driver-model <id> [--name <name>] [--workdir <dir>] \"<intent>\"")
@@ -210,6 +211,7 @@ const configScaffold = `schema_version: "1"
 # Optional repo-level defaults. Flags/env override these; ~/.axprobe/config.yaml
 # is the fallback if these are unset.
 # defaults:
+#   driver: axprobe  # axprobe | codex | claude
 #   driver_model: moonshotai/kimi-k2.6
 #   review_model: anthropic/claude-opus-4.8
 
@@ -447,7 +449,8 @@ func probeCmd(commands []string, image string) error {
 
 func runMain() {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	driverModel := fs.String("driver-model", "", "OpenRouter model id for the LLM driver (e.g. moonshotai/kimi-k2.6). Falls back to AXPROBE_DRIVER_MODEL, repo defaults, then user defaults. If configured, use the LLM driver instead of scripted probes.")
+	driverName := fs.String("driver", "", "Driver runtime: axprobe (default), codex, or claude. Falls back to AXPROBE_DRIVER, repo defaults, then user defaults.")
+	driverModel := fs.String("driver-model", "", "Model id for the selected driver. Required for driver=axprobe; pass-through for codex/claude when set.")
 	reportPath := fs.String("report", "", "Path to write the JSON AX report (default ~/.axprobe/runs/<run-id>/report.json for LLM runs).")
 	unattended := fs.Bool("unattended", false, "No interactive gates: satisfy oauth from a cached/provisioned token or end stopped_at_gate (for CI).")
 	workdir := fs.String("workdir", "", "Mount this host dir as the persistent project workspace (the live journey). Never wiped. Empty = use workspace.template if declared; otherwise disposable.")
@@ -475,7 +478,7 @@ func runMain() {
 		if len(manifests) > 1 {
 			rp = ""
 		}
-		if err := cmdRun(mp, *driverModel, rp, *unattended, *workdir, *keepWorkspace, *reset); err != nil {
+		if err := cmdRun(mp, *driverName, *driverModel, rp, *unattended, *workdir, *keepWorkspace, *reset); err != nil {
 			fmt.Fprintf(os.Stderr, "axprobe: %v\n", err)
 			failed = true
 		}
@@ -561,28 +564,43 @@ func filterOut(items []string, drop string) []string {
 	return out
 }
 
-func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, workdir string, keepWorkspace bool, reset bool) error {
+func cmdRun(manifestPath, driverFlag, driverModelFlag, reportPath string, unattended bool, workdir string, keepWorkspace bool, reset bool) error {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
 		return err
 	}
-	driverModel := config.ResolveDriverModel(driverModelFlag, m.Defaults.DriverModel)
-	if driverModel == "" {
+	driverName := config.ResolveDriver(driverFlag, m.Defaults.Driver)
+	driverModel := ""
+	if driverName == "axprobe" {
+		driverModel = config.ResolveDriverModel(driverModelFlag, m.Defaults.DriverModel)
+	} else {
+		driverModel = strings.TrimSpace(driverModelFlag)
+	}
+	if driverName == "axprobe" && driverModel == "" {
 		return fmt.Errorf("no driver model configured for %q: set --driver-model, AXPROBE_DRIVER_MODEL, .axprobe/config.yaml:defaults.driver_model, or ~/.axprobe/config.yaml:driver_model", m.Name)
 	}
-
-	// Build the LLM client up front so a missing key fails before we spin up a box
-	// and run setup.
-	client, err := llm.New(driverModel)
-	if err != nil {
-		return err
+	if driverName != "axprobe" && driverName != "codex" && driverName != "claude" {
+		return fmt.Errorf("unsupported driver %q (supported: axprobe, codex, claude)", driverName)
+	}
+	var client *llm.Client
+	if driverName == "axprobe" {
+		// Build the LLM client up front so a missing key fails before we spin up a box
+		// and run setup.
+		client, err = llm.New(driverModel)
+		if err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("▸ scenario: %s\n", m.Name)
 	if m.Goal != "" {
 		fmt.Printf("▸ goal:     %s\n", m.Goal)
 	}
-	fmt.Printf("▸ driver:   llm (%s)\n", driverModel)
+	if driverModel != "" {
+		fmt.Printf("▸ driver:   %s (%s)\n", driverName, driverModel)
+	} else {
+		fmt.Printf("▸ driver:   %s\n", driverName)
+	}
 
 	runWorkdir, cleanupWorkspace, err := prepareWorkspace(manifestPath, m, workdir, keepWorkspace)
 	if err != nil {
@@ -610,7 +628,7 @@ func cmdRun(manifestPath, driverModelFlag, reportPath string, unattended bool, w
 		defer runTeardown(b, m.Teardown)
 	}
 
-	return runDriver(b, m, client, reportPath, unattended, reset)
+	return runSelectedDriver(b, m, driverName, driverModel, client, reportPath, unattended, reset)
 }
 
 // clearWorkspacePaths removes the scenario's declared outputs, each resolved
@@ -966,9 +984,27 @@ func defaultReportPath(name string) (string, error) {
 	return filepath.Join(dir, "report.json"), nil
 }
 
-// runDriver is the Layer 1 LLM driver. It collects the approved metrics and
-// emits both a human summary and a JSON report artifact.
-func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath string, unattended, reset bool) error {
+func runSelectedDriver(b box.Box, m *manifest.Manifest, driverName, driverModel string, client *llm.Client, reportPath string, unattended, reset bool) error {
+	br := primeCredentials(b, m, unattended, reset)
+	var (
+		res *driver.Result
+		err error
+	)
+	switch driverName {
+	case "axprobe":
+		res, err = driver.New(b, m, client, br).Run(context.Background())
+	case "codex", "claude":
+		res, err = externaldriver.Run(context.Background(), b, m, driverName, driverModel)
+	default:
+		err = fmt.Errorf("unsupported driver %q", driverName)
+	}
+	if err != nil {
+		return err
+	}
+	return finishRunReport(m, res, reportPath)
+}
+
+func primeCredentials(b box.Box, m *manifest.Manifest, unattended, reset bool) *broker.Broker {
 	store := secrets.New(m.Name)
 	cold := reset || (m.Reset != nil && m.Reset.Secrets)
 	br := broker.New(m, b, store, unattended, os.Stdin, os.Stdout)
@@ -977,12 +1013,11 @@ func runDriver(b box.Box, m *manifest.Manifest, client *llm.Client, reportPath s
 	} else {
 		br.Prime() // restore the shared warehouse token (warm) before driving
 	}
+	return br
+}
 
-	res, err := driver.New(b, m, client, br).Run(context.Background())
-	if err != nil {
-		return err
-	}
-
+// finishRunReport emits the report and applies the scenario AX bar.
+func finishRunReport(m *manifest.Manifest, res *driver.Result, reportPath string) error {
 	rep := emitReport(m.Name, res, reportPath)
 
 	// AX bar: if the scenario declares `expect`, fail the run (non-zero exit) when

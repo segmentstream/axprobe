@@ -50,6 +50,7 @@ func TestCheckWorkspaceSecretsIgnoresTemplates(t *testing.T) {
 // set one. Isolate HOME and env so no machine-level default leaks in.
 func TestCmdRunRequiresDriverModel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AXPROBE_DRIVER", "")
 	t.Setenv("AXPROBE_DRIVER_MODEL", "")
 
 	wd := t.TempDir()
@@ -63,7 +64,7 @@ box:
 		t.Fatal(err)
 	}
 
-	err := cmdRun(manifest, "", "", false, "", false, false)
+	err := cmdRun(manifest, "", "", "", false, "", false, false)
 	if err == nil {
 		t.Fatal("expected a run with no driver model to fail before box startup")
 	}

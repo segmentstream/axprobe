@@ -88,6 +88,8 @@ type Step struct {
 
 // Result holds the approved v0 telemetry for a driven run.
 type Result struct {
+	Driver        string
+	DriverVersion string
 	DriverModel   string
 	Outcome       string // goal_reached | stopped_at_gate | stuck | error
 	GoalReached   bool
@@ -123,6 +125,12 @@ func (r *Result) finalize() {
 	events.Emit("outcome", "outcome", r.Outcome, "goal_reached", r.GoalReached)
 }
 
+// FinalizeForExternal derives the headline outcome for non-LLM-tool drivers
+// that populate Result directly.
+func (r *Result) FinalizeForExternal() {
+	r.finalize()
+}
+
 // Driver couples a box, a manifest goal, a driver model and a gatekeeper.
 type Driver struct {
 	box  box.Box
@@ -139,7 +147,7 @@ func New(b box.Box, m *manifest.Manifest, client *llm.Client, gk Gatekeeper) *Dr
 // Run drives the box toward the goal until the model calls finish/gate or the
 // step budget runs out.
 func (d *Driver) Run(ctx context.Context) (*Result, error) {
-	res := &Result{DriverModel: d.llm.Model}
+	res := &Result{Driver: "axprobe", DriverModel: d.llm.Model}
 	start := time.Now()
 	defer func() { res.DurationSec = time.Since(start).Seconds() }()
 
@@ -372,6 +380,9 @@ func (d *Driver) dispatch(tc llm.ToolCall, res *Result) (output string, done boo
 // transcript and the stuck-guard's progress comparison.
 func resultLine(r box.ExecResult) string {
 	for _, stream := range []string{r.Stdout, r.Stderr} {
+		if line := jsonResultLine(stream); line != "" {
+			return line
+		}
 		for _, ln := range strings.Split(stream, "\n") {
 			if t := strings.TrimSpace(ln); t != "" {
 				return oneline(t)
@@ -379,6 +390,76 @@ func resultLine(r box.ExecResult) string {
 		}
 	}
 	return ""
+}
+
+func jsonResultLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || (s[0] != '{' && s[0] != '[') {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal([]byte(s), &value); err != nil {
+		return ""
+	}
+	var parts []string
+	collectJSONSummary("", value, &parts)
+	if len(parts) == 0 {
+		return oneline(s)
+	}
+	return oneline("json: " + strings.Join(parts, " "))
+}
+
+func collectJSONSummary(path string, value any, parts *[]string) {
+	if len(*parts) >= 8 {
+		return
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"command", "status", "ready", "type", "stage", "reason", "message"} {
+			if child, ok := v[key]; ok && shouldSummarizeJSONPath(path, key) {
+				appendJSONSummary(pathKey(path, key), child, parts)
+			}
+		}
+		for _, key := range []string{"data", "envelope", "next_action", "diagnostics"} {
+			if child, ok := v[key]; ok {
+				collectJSONSummary(pathKey(path, key), child, parts)
+			}
+		}
+	case []any:
+		for i, child := range v {
+			if i >= 3 || len(*parts) >= 8 {
+				return
+			}
+			collectJSONSummary(path, child, parts)
+		}
+	}
+}
+
+func shouldSummarizeJSONPath(path, key string) bool {
+	if key == "reason" || key == "message" {
+		return strings.Contains(path, "next_action") || strings.Contains(path, "diagnostics")
+	}
+	return true
+}
+
+func appendJSONSummary(key string, value any, parts *[]string) {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) != "" {
+			*parts = append(*parts, fmt.Sprintf("%s=%q", key, v))
+		}
+	case bool:
+		*parts = append(*parts, fmt.Sprintf("%s=%t", key, v))
+	case float64:
+		*parts = append(*parts, fmt.Sprintf("%s=%g", key, v))
+	}
+}
+
+func pathKey(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
 }
 
 // repeatedNoProgress counts transcript steps with the same (normalized) command

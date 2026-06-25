@@ -154,12 +154,58 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
 
 ## AX-defect checklist (what to file)
 
+- **Grow the checklist from real runs.** When a review exposes a repeatable CLI
+  AX pattern, generalize it here as a product-agnostic best practice. Keep the
+  rule independent of the tested manifest/tool/vendor, and phrase it so future
+  reviews can apply it only when the transcript proves the relevant surface. This
+  skill is the shared review memory; do not bury reusable lessons in one-off
+  issue drafts.
 - **Trace to completion, not to the first friction.** The wall that matters is the
   one that blocks the GOAL — often a step *beyond* where the agent stopped (it
   bound the source but still couldn't write the transform). Name the deepest
   missing capability it would have needed, including ones it never reached (could
-  it even *inspect* the data it must transform?). Fixing only the first friction
-  leaves the goal unreachable.
+  it even *inspect* the data it must transform?). Then ask for the smallest next
+  product change that exposes or enables that capability. Fixing only the first
+  friction leaves the goal unreachable, but filing the whole future architecture
+  makes the review too broad to act on.
+- **Minimal next step, not roadmap.** A finding should request the minimum viable
+  product change that would make the agent no longer stuck or remove the proven
+  friction. Prefer one request item. Do not design ideal JSON schemas, telemetry
+  payloads, response fields, command families, or future architecture unless that
+  exact missing shape is what blocked the transcript. If the transcript did not
+  prove data must be returned, do not propose data fields. Do not invent progress
+  stage names, step counts, resource names, or status messages; use the minimal
+  observable behavior needed to show the next step is unblocked.
+- **Do not overfit infrastructure symptoms.** If the final blocker is an implicit
+  wrapper around the user's action — server startup, readiness checks, background
+  services, fixed ports, or health probes — do not default to asking for host or
+  timeout tuning unless the transcript proves that would complete the goal. Prefer
+  the smallest change that lets the primary action run directly or makes the
+  auxiliary server/dev mode explicit. Report readiness/network facts as observed;
+  do not infer IPv4/IPv6 root cause, network-interface mismatch, service health,
+  or successful downstream execution unless the transcript proves it.
+- **Keep the primary action primary.** If the tool already has a command whose
+  name matches the user's action (`run`, `build`, `test`, `deploy`, `sync`,
+  `import`, `export`, etc.), keep that command as the desired path unless the
+  transcript proves it cannot own the action. Do not invent a new required
+  lifecycle command as the main fix. Auxiliary server/dev commands may be opt-in
+  modes or diagnostics, not prerequisites. The Desired Transcript should start
+  with the primary action command unless the user's goal was explicitly to manage
+  a server/lifecycle.
+- **Server lifecycle must be explicit.** If a CLI command starts a server,
+  daemon, container stack, background job, or fixed-port listener, review whether
+  that lifecycle matches the user's action. One-shot action commands should finish
+  and exit by default. Long-lived server/dev modes should be explicit, and detached
+  processes should have discoverable status, logs, stop/down, and cleanup
+  affordances. Readiness checks should say what endpoint/process is being checked
+  and preserve the original failure. If a one-shot command fails after starting
+  detached services, do not request only a different health probe; request clear
+  lifecycle ownership: complete-and-clean-up for the action command, or an
+  explicit opt-in server/dev lifecycle with status/logs/down.
+- **Stop desired flow at the newly unblocked step.** If the agent was blocked
+  before execution, do not add post-run validation, status, row-count, or reporting
+  requirements. Those may become later findings only after a run reaches that
+  point and proves they are missing.
 - Does the tool **guide** the agent (help text, structured next-actions), or did it
   have to guess? A tool drivable from `--help` alone scores high.
 - **Self-sufficiency**: can the agent *complete* the goal using only the tool, or
@@ -186,7 +232,10 @@ The report quantifies AX: `human_interventions` (HIC), `false_errors`, `steps`,
   verification command, and contract summary when applicable. Avoid tutorial-style
   `next_steps` and generated docs/markdown as the agent interface; do not request
   keeping generated docs "in addition to" structured output unless documentation
-  itself was the user's goal.
+  itself was the user's goal. Do not add a docs/markdown anti-pattern finding just
+  because a README or markdown path appeared during diagnostics; include it only
+  when docs/markdown were part of the scaffold/authoring path or contributed to
+  the observed blocker.
 - **Do not invent unproven fixes.** Ask only for missing capabilities proven by
   the transcript. Do not ask for project/account/workspace override flags when the
   failing command already identifies the external resource fully; ask for the
@@ -248,11 +297,16 @@ framed with an AXprobe issue-list prefix:
   must see exactly what is called and why. **Ground it in reality:** build from the
   run's `post_mortem` (the driver saw the real interface) or commands the transcript
   actually shows; mark any not-yet-existing capability `# PROPOSED`; never fabricate
-  a flag or output. Keep this public-safe too: placeholders instead of private
-  identifiers and no raw data. (Judgment.)
+  a flag or output. Use only the minimal observable result needed to prove the next
+  unblocked step; do not invent success IDs, counters, job names, JSON keys, or
+  example response fields. Use the post-mortem as factual context; do not quote it
+  verbatim. Keep this public-safe too: placeholders instead of private identifiers
+  and no raw data. (Judgment.)
 - **Request** — concrete, numbered changes. Each item should include the change
   and a short rationale explaining how it improves the desired transcript or
-  removes the observed AX failure. Do not just restate the change.
+  removes the observed AX failure. Keep this to the smallest next product step
+  needed for the observed run; avoid speculative response schemas and roadmap
+  additions. Do not just restate the change.
 - **Attribution footer** — generated by the renderer:
   `Reported from an AXprobe agentic experience review.`
 

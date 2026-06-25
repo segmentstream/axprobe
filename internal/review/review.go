@@ -64,24 +64,38 @@ Rules:
 - Do not reveal private source names either. If the run used a named source, package, adapter, customer, campaign, project, dataset, table, resource, or integration as test data, replace it with placeholders such as <source-name>, <adapter-name>, or <external-resource>.
 - Mention that an autonomous/agentic harness attempted the workflow, but do not name the private scenario or report file. AXprobe attribution is added by the renderer; do not add your own footer.
 - The review must preserve the run story before making requests: goal, agent_path, worked, stopped, and would_have_helped are mandatory. They should explain what the agent tried to do, the sequence it followed, what helped, exactly where it failed, and what affordance would have let it progress.
+- Do NOT copy the driver post-mortem verbatim. It is private working material and may be verbose or self-correcting. Extract only factual run details into concise issue prose.
 - agent_path is chronological, not a feature-request list. Include the major commands or tool surfaces the agent used, but sanitize private identifiers with placeholders like <source-name>, <external-resource>, <field-name>, and <local-path>.
 - worked must credit useful affordances the run proved (for example structured JSON, state-machine next_action, discovery/browse commands, clear scaffolding output). If nothing worked, say so.
 - stopped must name the final wall that left the goal incomplete, not merely the first friction.
 - would_have_helped bridges the stopped state to the desired transcript: the missing command, diagnostic, structured state, or preflight that would have let the agent continue.
 - path_transcript is a chronological, PUBLIC-SAFE transcript of the agent's attempted path, not a tiny failure excerpt. Show the important command/result steps from discovery through the final wall: setup/health checks if relevant, help or contract discovery, scaffold/generate actions, state/config checks, diagnostics, and the point where progress stopped. Prefer 8-15 concise command/result pairs; include enough successful steps to make the failure understandable. Use placeholders for private identifiers and summarize long JSON with the fields that mattered.
 - failed_transcript is a SHORT, PUBLIC-SAFE transcript excerpt proving the final wall. It must be commands and results, not prose. Use placeholders for private identifiers. Include the command that proves the wall and any immediately preceding command that should have supplied enough state to avoid it.
-- desired_transcript is a CONCRETE tool-call transcript — the reader must see exactly what is called and why. Each step: a "# why" comment (one line), the command line ("$ ..."), and the "→ result" the tool would return. Show real command/flag names and realistic results; if a step edits a file, show the key lines. Not prose — a runnable-looking sequence.
+- desired_transcript is a CONCRETE tool-call transcript — the reader must see exactly what is called and why. Each step: a "# why" comment (one line), the command line ("$ ..."), and the "→ result" the tool would return. Show real command/flag names and the minimal observable result; if a step edits a file, show the key lines. Not prose — a runnable-looking sequence.
 - GROUND desired_transcript in reality, do not invent the interface. If a "driver post-mortem" is present, build the desired_transcript from it — the driver actually ran the tool and saw its real commands, flags, and outputs. Otherwise use only command/flag names that appear in the transcript. Mark any step that needs a capability the tool does NOT yet offer with "# PROPOSED". Never fabricate a flag or output.
-- Keep failed_transcript and desired_transcript public-safe too: use placeholders for private identifiers and do not show real raw data. Do not invent sample payload contents or JSON keys; if row values were not observed, write "→ sample rows with payload values redacted" or use <json-key>.
+- Keep failed_transcript and desired_transcript public-safe too: use placeholders for private identifiers and do not show real raw data. Do not invent sample payload contents, IDs, counters, job names, JSON keys, or example success fields. If the transcript already showed a response shape, you may reuse only the keys needed to prove the next unblocked step. Otherwise describe the minimal observable behavior, such as "→ exits 0" or "→ command proceeds past the previous error".
 - If the request involves a broad or potentially risky capability, frame the minimal safe capability needed using only what the transcript proves: scoped, read-only, limited, dry-run, or confirmation-gated as appropriate.
+- Request the MINIMUM VIABLE PRODUCT CHANGE that would unblock the observed run or remove the proven friction. Prefer one request item. Split into multiple items only when the transcript proves multiple independent blockers must be fixed to reach the goal.
+- Do NOT design a roadmap, final architecture, ideal response schema, telemetry payload, or rich JSON contract unless the transcript proves a missing field/shape directly blocked the agent. If output structure is not the blocker, do not propose output fields. Keep desired results to the smallest observable behavior needed for the next successful step.
+- Do NOT add post-run validation/status/row-count commands unless the transcript reached the run step and failed specifically because completion could not be validated. If the agent was blocked before execution, the desired_transcript should stop at the first newly unblocked execution step.
+- TRACE TO COMPLETION to identify the true blocker, but do not turn every later improvement into a request. The review should ask for the next product step that makes the agent no longer stuck or meaningfully reduces the friction it actually hit.
+- If the final blocker is an implicit wrapper/orchestration layer (server startup, readiness checks, background services, fixed ports, health probes) around the user's actual action, do not default to a narrow tuning flag such as host/timeout override unless the transcript proves that tuning would complete the goal. Prefer the smallest change that lets the primary action run directly or makes the auxiliary server/dev mode explicit.
+- If the tool already has a command whose name matches the user's primary action (run, build, test, deploy, sync, import/export, etc.), keep that command as the desired path unless the transcript proves it cannot own the action. Do not invent a new required lifecycle command as the main fix. Auxiliary server/dev commands may be opt-in modes, not prerequisites for the primary action.
+- For primary action commands blocked by an implicit server/readiness layer, desired_transcript should normally keep the same primary command and show the minimal observable behavior: it proceeds past the previous blocker, performs the user's action, and exits. Do not invent streaming lifecycle JSON, job IDs, status fields, or new health-check flags unless those exact shapes appeared in the transcript or are the direct missing capability.
+- In that case, desired_transcript must start with the primary action command, not with a new server/start/status command, unless the user's goal was explicitly to manage a server. Mention server/dev lifecycle commands only as optional or secondary request context.
+- Do not invent progress-stage names, step counts, resource names, or status messages for desired output. If the transcript did not prove them, use generic minimal wording such as "→ proceeds past the previous readiness failure, executes the action, and exits 0".
+- If a one-shot user action starts detached/background services and then fails or exits, review whether it leaves those services running. Do not request only a different readiness probe when the broader proven defect is hidden lifecycle ownership. The minimal fix is usually: the action command runs to completion and cleans up, or the long-lived server/dev lifecycle is an explicit opt-in command with status/logs/down.
+- When a readiness/network error appears, report observed facts rather than inferring root cause. Do not assert IPv4/IPv6 mismatch, network-interface mismatch, container health, service health, or that the primary action would have completed unless the transcript explicitly proves it. Do not put inferred root causes in the title.
+- Apply CLI AX best-practice checks when the transcript shows the relevant surface, but only file what the run proves. For server/background lifecycle: user action commands should be one-shot by default; long-lived servers should be explicit modes; detached processes should have visible status/logs/stop/cleanup affordances; readiness checks should expose what is being checked and preserve the original error.
 - Do NOT request project/account/workspace override flags unless the transcript proves that selecting the project/account/workspace is itself missing. If the failed command already uses a fully qualified resource identifier that includes the project/account/workspace, do not add a separate override merely because the resource is external or cross-project.
 - Do not add separate requests for unsupported commands the driver guessed unless the real tool output falsely claimed success or hid the next action. Focus the request on the deepest missing capability needed to complete the goal.
-- TRACE TO COMPLETION, not to the first friction. Identify the wall that actually blocks reaching the GOAL — it is often a step BEYOND where the agent stopped (e.g. the agent fixed the binding but still could not write the transform). Cover every blocking gap, not just the first.
-- NAME THE DEEPEST MISSING CAPABILITY the agent would have needed — including ones it never reached. Ask: to finish, what did it have to know or do that the tool gave no way to (e.g. could it even inspect the data it must transform?).
+- TRACE TO COMPLETION, not to the first friction. Identify the wall that actually blocks reaching the GOAL — it is often a step BEYOND where the agent stopped (e.g. the agent fixed the binding but still could not write the transform). Mention later gaps only as context or residual risk; keep the request focused on the smallest next product change.
+- NAME THE DEEPEST MISSING CAPABILITY the agent would have needed — including ones it never reached. Ask: to finish, what did it have to know or do that the tool gave no way to (e.g. could it even inspect the data it must transform?). Then request the smallest increment that exposes or enables that capability, not the complete future design.
 - If the tool already exposed structured state (for example a resource location/region, resource ID, auth state, or next action), downstream commands should use it or provide a diagnostic that connects the dots. Requiring the agent to rediscover or manually reconcile known state is an AX defect.
 - Only ask for more specific config/flag names when the transcript proves that one generic term is being used for different scopes and that ambiguity contributed to the failure. Otherwise keep the tested tool's existing domain term.
 - A CLI should be understandable without generated docs, markdown guides, skills, or prose-only instructions. In scaffold/authoring workflows, generated docs and .md files are an AX anti-pattern by default because they become stale prose skills instead of live tool behavior. Agentic workflows should be driven by help text, structured JSON, contracts, next_actions, generated file TODO markers, and diagnostics.
 - Do NOT request adding more instructions to generated docs or markdown guides as the fix. Do NOT request keeping generated docs/markdown as scaffold guidance "in addition to" structured output. Do NOT include human_docs, docs, or markdown artifacts in the desired scaffold output unless the user's goal explicitly asks to generate documentation. If generated docs or markdown appeared in the run, request moving that guidance into structured CLI outputs, generated implementation files, help, next_actions, and diagnostics.
+- Do NOT add a docs/markdown anti-pattern request just because a README or markdown path appeared during diagnostics. Only include it when docs/markdown were part of the scaffold/authoring path or contributed to the observed blocker.
 - Do NOT request translating every upstream/provider error into a custom error. When an upstream/provider error appears in the failure, the request or desired_transcript must preserve the original provider error and add structured diagnostics only when the tool has deterministic context from config, discovery, or prior commands. Prefer fields like provider_error/raw_error, known_state, and affordances over hiding the original error.
 - If the transcript includes a scaffold/generate/create-package command, assess scaffold AX even if a later command is the final blocker. The desired scaffold output should be structured state such as created_files, unresolved implementation items, verify command, and contract summary when the transcript proves those concepts. Do NOT ask for tutorial-style next_steps, and do NOT include docs/markdown outputs as a desired scaffold artifact.
 - If a browse/discovery command or driver post-mortem reveals scoped state that the failing command did not use, failed_transcript must show both facts: the discovered state and the conflicting state used by the failing command.
@@ -107,8 +121,8 @@ func reportContext(r report.Report) string {
 		}
 	}
 	if pm := strings.TrimSpace(r.PostMortem); pm != "" {
-		b.WriteString("\ndriver post-mortem (the agent's own grounded reflection — build the ideal_flow from THIS, it saw the real interface):\n")
-		b.WriteString(pm)
+		b.WriteString("\ndriver post-mortem excerpt (use as factual context only; do not quote verbatim):\n")
+		b.WriteString(reviewPostMortemExcerpt(pm))
 		b.WriteString("\n")
 	}
 	if hints := reviewHints(r); len(hints) > 0 {
@@ -118,6 +132,57 @@ func reportContext(r report.Report) string {
 		}
 	}
 	return b.String()
+}
+
+const maxReviewPostMortemChars = 3000
+
+func reviewPostMortemExcerpt(pm string) string {
+	pm = stripThinkBlocks(pm)
+	pm = stripSpeculativePostMortemSections(pm)
+	pm = strings.TrimSpace(pm)
+	if len(pm) <= maxReviewPostMortemChars {
+		return pm
+	}
+	return strings.TrimSpace(pm[:maxReviewPostMortemChars]) + "\n… (post-mortem truncated for review context)"
+}
+
+func stripThinkBlocks(s string) string {
+	for {
+		start := strings.Index(s, "<think>")
+		if start < 0 {
+			return s
+		}
+		end := strings.Index(s[start:], "</think>")
+		if end < 0 {
+			return strings.TrimSpace(s[:start])
+		}
+		s = s[:start] + s[start+end+len("</think>"):]
+	}
+}
+
+func stripSpeculativePostMortemSections(s string) string {
+	var kept []string
+	skipSection := false
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, "**ideal ") ||
+			strings.HasPrefix(lower, "## ideal ") ||
+			strings.HasPrefix(lower, "ideal command sequence") ||
+			strings.HasPrefix(lower, "**proposed") ||
+			strings.HasPrefix(lower, "## proposed") {
+			skipSection = true
+			continue
+		}
+		if skipSection && (strings.HasPrefix(trimmed, "**") || strings.HasPrefix(trimmed, "## ")) {
+			skipSection = false
+		}
+		if skipSection || strings.Contains(lower, "proposed:") || strings.Contains(lower, "# proposed") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 func reviewHints(r report.Report) []string {
@@ -141,6 +206,21 @@ func reviewHints(r report.Report) []string {
 	if containsAny(body, "location", "region", "zone", "scope") {
 		hints = append(hints, "The run mentioned location/region/scope. Only request more specific naming if the transcript proves one generic term was used for different scopes and that ambiguity contributed to the failure.")
 	}
+	if looksLikeAuxiliaryServerBlocker(body) {
+		hints = append(hints, "The final blocker looks like an auxiliary server/readiness layer around the user's primary action. Do not make the request only a host/timeout override unless the transcript proves that would complete the goal. Prefer the smallest change that lets the primary action run directly or makes server/dev mode explicit, and do not invent success IDs or response fields in desired output.")
+		hints = append(hints, "Treat fixed localhost/port/readiness failures as observed symptoms, not proven root causes. Do not request only changing localhost to 127.0.0.1, adding a host flag, or adding a timeout flag. Those may be diagnostics or secondary context, but the primary request should remove or make explicit the auxiliary server lifecycle that blocked the user's action.")
+		hints = append(hints, "Do not claim the container/service was healthy or that the user's action would have completed. The transcript proved only that a process/container was running or logged readiness while the CLI could not connect.")
+		hints = append(hints, "If the transcript already has a primary action command, do not invent a new required lifecycle command before it. The desired path should keep the primary action command as the default; server/dev lifecycle commands may be opt-in modes or diagnostics only.")
+		hints = append(hints, "For this report shape, desired_transcript must start with the existing primary action command that the state machine recommended, not with a new server/start/status command.")
+		hints = append(hints, "For this report shape, do not include proposed health-host/start-timeout flags, streaming lifecycle JSON, job IDs, or new success fields in the desired transcript. Show the existing primary action command proceeding past the previous blocker and exiting after the action.")
+		hints = append(hints, "For this report shape, do not invent progress stage names or root causes such as IPv6/network-interface mismatch. Title and desired transcript should stick to observed facts and minimal behavior.")
+	}
+	if looksLikeServerLifecycle(body) {
+		hints = append(hints, "Apply the generic CLI server-lifecycle checklist only to proven issues: one-shot user actions should exit; long-lived server/dev modes should be explicit; detached services need status/logs/stop/cleanup affordances; readiness output should say what endpoint/process is checked and preserve the original failure.")
+	}
+	if looksLikeDetachedServiceAfterFailure(body) {
+		hints = append(hints, "The transcript shows a command failure while detached services/processes were still listed as running. Do not request only a different health probe. The request should address lifecycle ownership: a one-shot action must complete and clean up, or long-lived services must be an explicit opt-in mode with status/logs/down.")
+	}
 	if containsFullyQualifiedResource(r) {
 		hints = append(hints, "A failing command already used a fully qualified resource identifier. Forbidden unless explicitly proven by the transcript: requesting a separate project/account/workspace override merely because the resource is external or cross-project.")
 	}
@@ -158,7 +238,23 @@ func containsFullyQualifiedResource(r report.Report) bool {
 var fullyQualifiedResourceRE = regexp.MustCompile("`?[A-Za-z][A-Za-z0-9_-]*\\.[A-Za-z_][A-Za-z0-9_-]*\\.[A-Za-z_][A-Za-z0-9_-]*`?")
 
 func looksLikeGeneratedDocsDependency(body string) bool {
-	return strings.Contains(body, ".md") || strings.Contains(body, "docs/")
+	hasMarkdown := strings.Contains(body, ".md") || strings.Contains(body, "docs/") || strings.Contains(body, "readme")
+	hasAuthoringFlow := containsAny(body, "scaffold", "source create", "source init", "create-package", "implementation_guide", "implementation guide", "generated docs", "next_steps", "next steps")
+	return hasMarkdown && hasAuthoringFlow
+}
+
+func looksLikeAuxiliaryServerBlocker(body string) bool {
+	return containsAny(body, "health check", "health-check", "readiness", "ready") &&
+		containsAny(body, "server", "localhost", "127.0.0.1", "port", "container", "docker")
+}
+
+func looksLikeServerLifecycle(body string) bool {
+	return containsAny(body, "server", "daemon", "serve", "localhost", "port", "background", "container", "docker compose", " up -d", "health check", "readiness")
+}
+
+func looksLikeDetachedServiceAfterFailure(body string) bool {
+	return containsAny(body, "exit 1", "status=\"error\"", `"status":"error"`, "failed") &&
+		containsAny(body, "docker ps", "container", "up ", " up ", "running")
 }
 
 func containsAny(s string, needles ...string) bool {

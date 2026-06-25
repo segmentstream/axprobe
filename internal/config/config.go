@@ -19,6 +19,7 @@ import (
 
 // Config is the user-level defaults file (~/.axprobe/config.yaml).
 type Config struct {
+	Driver      string `yaml:"driver"`       // driver runtime: axprobe (default), codex, claude
 	DriverModel string `yaml:"driver_model"` // default driver model (e.g. moonshotai/kimi-k2.6)
 	ReviewModel string `yaml:"review_model"` // default review/judge model (prefer a stronger one)
 }
@@ -45,6 +46,12 @@ func Load() Config {
 	}
 	_ = yaml.Unmarshal(data, &c)
 	return c
+}
+
+// ResolveDriver resolves the driver runtime: flag > AXPROBE_DRIVER >
+// workspaceDefault > config.driver > axprobe.
+func ResolveDriver(flag, workspaceDefault string) string {
+	return firstNonEmpty(flag, os.Getenv("AXPROBE_DRIVER"), workspaceDefault, Load().Driver, "axprobe")
 }
 
 // ResolveDriverModel resolves the driver model: flag > AXPROBE_DRIVER_MODEL >

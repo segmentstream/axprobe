@@ -33,7 +33,9 @@ type Tokens struct {
 type Report struct {
 	SchemaVersion      string               `json:"schema_version"`
 	Scenario           string               `json:"scenario"`
+	Driver             string               `json:"driver,omitempty"`
 	DriverModel        string               `json:"driver_model"`
+	DriverVersion      string               `json:"driver_version,omitempty"`
 	Outcome            string               `json:"outcome"`
 	GoalReached        bool                 `json:"goal_reached"`
 	HumanInterventions int                  `json:"human_interventions"`
@@ -115,7 +117,9 @@ func From(scenario string, r *driver.Result) Report {
 	return Report{
 		SchemaVersion:      schemaVersion,
 		Scenario:           scenario,
+		Driver:             r.Driver,
 		DriverModel:        r.DriverModel,
+		DriverVersion:      r.DriverVersion,
 		Outcome:            r.Outcome,
 		GoalReached:        r.GoalReached,
 		HumanInterventions: len(r.Gates),
@@ -172,7 +176,13 @@ func (r Report) WriteJSON(path string) error {
 func (r Report) PrintHuman(w io.Writer) {
 	fmt.Fprintln(w, "\n── AX report ───────────────────────────────")
 	fmt.Fprintf(w, "scenario:            %s\n", r.Scenario)
+	if strings.TrimSpace(r.Driver) != "" {
+		fmt.Fprintf(w, "driver:              %s\n", r.Driver)
+	}
 	fmt.Fprintf(w, "driver_model:        %s\n", r.DriverModel)
+	if strings.TrimSpace(r.DriverVersion) != "" {
+		fmt.Fprintf(w, "driver_version:      %s\n", r.DriverVersion)
+	}
 	fmt.Fprintf(w, "outcome:             %s\n", r.Outcome)
 	fmt.Fprintf(w, "goal_reached:        %v\n", r.GoalReached)
 	fmt.Fprintf(w, "human_interventions: %d\n", r.HumanInterventions)
@@ -401,7 +411,9 @@ func writeAttemptStep(b *strings.Builder, r Report, s driver.Step) {
 }
 
 // Draft is the no-LLM finding: sanitized run shape + observations as
-// why-it-matters, with transcript/request sections scaffolded for the operator.
+// why-it-matters. It must not treat driver post-mortem prose as a public issue
+// draft; the post-mortem is private working material and often contains
+// speculative proposed flows.
 func Draft(r Report) string {
 	why := make([]string, 0, len(r.Observations))
 	var suggestions []string
@@ -415,18 +427,14 @@ func Draft(r Report) string {
 	if strings.TrimSpace(summary) == "" {
 		summary = "The agent could not complete the goal — see the transcript below."
 	}
-	agentPath := strings.TrimSpace(r.PostMortem)
-	if agentPath == "" {
-		agentPath = "See the Attempt Transcript for the chronological command path."
-	}
+	agentPath := "See the Attempt Transcript for the chronological command path."
 	worked := "The Attempt Transcript shows which commands produced useful state before the run stopped."
 	stopped := fallbackStopped(r)
 	wouldHaveHelped := "A machine-actionable next step from the final observed state, so the agent can continue without guessing."
 	if len(suggestions) > 0 {
 		wouldHaveHelped = strings.Join(suggestions, " ")
 	}
-	desired := extractIdealSequence(r.PostMortem)
-	return RenderFinding(r, draftTitle(r), summary, "", agentPath, worked, stopped, wouldHaveHelped, "", "", failureTranscriptFallback(r), why, desired, nil)
+	return RenderFinding(r, draftTitle(r), summary, "", agentPath, worked, stopped, wouldHaveHelped, "", "", failureTranscriptFallback(r), why, "", nil)
 }
 
 func failureTranscriptFallback(r Report) string {
@@ -444,20 +452,6 @@ func failureTranscriptFallback(r Report) string {
 	}
 	b.WriteString("```\n")
 	return b.String()
-}
-
-func extractIdealSequence(pm string) string {
-	pm = strings.TrimSpace(pm)
-	if pm == "" {
-		return ""
-	}
-	lower := strings.ToLower(pm)
-	for _, marker := range []string{"**ideal sequence", "ideal sequence", "desired sequence"} {
-		if idx := strings.Index(lower, marker); idx >= 0 {
-			return strings.TrimSpace(pm[idx:])
-		}
-	}
-	return ""
 }
 
 func draftTitle(r Report) string {
@@ -581,6 +575,7 @@ func scenarioPrivateTerms(scenario string) []string {
 		"integration": true,
 		"manifest":    true,
 		"project":     true,
+		"ready":       true,
 		"review":      true,
 		"run":         true,
 		"scenario":    true,
